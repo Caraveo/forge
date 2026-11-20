@@ -1,0 +1,11 @@
+{
+  "python": "C:/Users/Administrator/unirig/python311-rocm/python.exe",
+  "commands": {
+    "infer": "C:/Projects/Img/infer.cmd",
+    "background": "C:/Projects/Background/background.cmd",
+    "dimension": "C:/Projects/Structure/dimension.cmd",
+    "transit": "C:/Users/Administrator/bin/transit.cmd",
+    "rig": "C:/Users/Administrator/.local/bin/rig.cmd"
+  },
+  "gpu": {"backend": "ROCm/Vulkan", "device": "cuda", "cpu_merge": true, "local_only": true}
+}

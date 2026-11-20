@@ -1,0 +1,20 @@
+name: Windows release
+on:
+  push:
+    tags: ['v0.01']
+permissions:
+  contents: write
+jobs:
+  package:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - run: python packaging/build.py
+      - name: Publish installers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$env:GITHUB_REF_NAME" dist/FORGE-v0.01-Setup.exe dist/FORGE-v0.01-x64.msi --title "FORGE $env:GITHUB_REF_NAME" --generate-notes --verify-tag
