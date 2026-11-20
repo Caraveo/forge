@@ -14,9 +14,9 @@ FORGE turns a description into a textured 3D game asset on your Windows PC. Desc
 
 ![Interactive mesh in FORGE](docs/preview.png)
 
-## Install v0.01
+## Install v0.02
 
-Open **FORGE-v0.01-Setup.exe** from the [release assets](https://github.com/caraveo/forge/releases). Setup checks your hardware and runs the embedded per-user Windows Installer package. You can also install the MSI directly. Launch **FORGE** from Start.
+Open **FORGE-v0.02-Setup.exe** from the [v0.02 release](https://github.com/Caraveo/forge/releases/tag/v0.02). Setup checks your hardware and runs the embedded per-user Windows Installer package. You can also install the MSI directly. Launch **FORGE** from Start.
 
 Requires Windows x64, an AMD CPU, a ROCm-compatible Radeon GPU with **16 GB dedicated VRAM**, **32 GB system RAM**, an AMD driver with Vulkan support, and at least **100 GB free storage** for the private runtime, downloaded models, caches, and temporary generation files. The check allows 256 MiB of driver-reserved VRAM on a nominal 16 GB board.
 
