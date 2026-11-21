@@ -6,6 +6,9 @@ release-source/
 # Marketing site has its own private repository.
 /web/
 
+# Documentation site has its own repository.
+/docs-site/
+
 # Job output folders created when the CLI runs from the repository root.
 /forge_*/
 /Buddy_*/
