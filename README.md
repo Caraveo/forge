@@ -2,6 +2,10 @@
 
 ![FORGE Anything on AMD/AMD](docs/banner.png)
 
+[![Windows release](https://github.com/Caraveo/forge/actions/workflows/release.yml/badge.svg?branch=main)](https://github.com/Caraveo/forge/actions/workflows/release.yml)
+[![Latest release](https://img.shields.io/github/v/release/Caraveo/forge?label=release)](https://github.com/Caraveo/forge/releases/latest)
+[![License](https://img.shields.io/github/license/Caraveo/forge)](LICENSE)
+
 **From a thought to a game ready 3D asset.** Describe it once. FORGE enhances the prompt, creates the image, shapes a textured model on your Radeon GPU, and prepares files for Unity. Watch the work move through the queue, then orbit and zoom the finished model right in the conversation.
 
 ### Dream it. Describe it. Forge it.
@@ -14,9 +18,9 @@ FORGE turns a description into a textured 3D game asset on your Windows PC. Desc
 
 ![Interactive mesh in FORGE](docs/preview.png)
 
-## Install v0.02
+## Install v0.03
 
-Open **FORGE-v0.02-Setup.exe** from the [v0.02 release](https://github.com/Caraveo/forge/releases/tag/v0.02). Setup checks your hardware and runs the embedded per-user Windows Installer package. You can also install the MSI directly. Launch **FORGE** from Start.
+Download **[FORGE-v0.03-Setup.exe](https://github.com/Caraveo/forge/releases/download/v0.03/FORGE-v0.03-Setup.exe)** from the [v0.03 release](https://github.com/Caraveo/forge/releases/tag/v0.03). Setup checks your hardware, installs or repairs the app, and provisions its private runtime. You can also download and install the [MSI](https://github.com/Caraveo/forge/releases/download/v0.03/FORGE-v0.03-x64.msi) directly, then launch **FORGE** from Start to provision the runtime.
 
 Requires Windows x64, an AMD CPU, a ROCm-compatible Radeon GPU with **16 GB dedicated VRAM**, **32 GB system RAM**, an AMD driver with Vulkan support, and at least **100 GB free storage** for the private runtime, downloaded models, caches, and temporary generation files. The check allows 256 MiB of driver-reserved VRAM on a nominal 16 GB board.
 
