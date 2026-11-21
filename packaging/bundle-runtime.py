@@ -1,4 +1,4 @@
-"""Build portable v0.04 runtime archives from the verified Windows runtimes."""
+"""Build the portable v0.04 UniRig runtime archive (code and Python runtimes, no model weights)."""
 import hashlib
 import json
 import os
@@ -9,11 +9,10 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'dist' / 'runtime-v004'
 OUT.mkdir(parents=True, exist_ok=True)
 LOCAL = Path.home() / 'unirig'
-CACHE = Path.home() / '.cache/huggingface/hub'
 
 def add_tree(archive, source, target):
-    # Filter on the path relative to the source: the Hugging Face sources live under
-    # ~/.cache, so testing absolute parts silently dropped every model checkpoint.
+    # Filter on the path relative to the source, so a source that itself lives under a
+    # skipped name (such as ~/.cache) is not silently dropped.
     skip = {'.git', '__pycache__', '.cache', 'logs', 'lightning_logs'}
     count = 0
     for path in sorted(source.rglob('*')):
@@ -40,11 +39,11 @@ def bundle(name, entries):
     archive.unlink()
     return {'directory': name, 'parts': parts}
 
+# Code and Python runtimes only. Model weights (UniRig checkpoints, the OPT
+# config, Qwen3) are downloaded from Hugging Face by desktop/setup-extras.py.
 unirig = [(ROOT / 'runtime/unirig', ''),
           (LOCAL / 'python311-rocm', 'python311-rocm'),
           (LOCAL / 'python312-rocm721', 'python312-rocm721')]
-unirig.append((CACHE / 'models--VAST-AI--UniRig/snapshots/36842e2b5947e9e60f89275b83208c8e74071c63', 'UniRig-main/experiments'))
-unirig.append((CACHE / 'models--facebook--opt-350m/snapshots/08ab08cc4b72ff5593870b5d527cf4230323703c', 'UniRig-main/models/opt'))
-manifest = {'version': '0.04', 'bundles': [bundle('unirig', unirig), bundle('chat', [(ROOT / 'dist/chat-model', '')])]}
+manifest = {'version': '0.04', 'bundles': [bundle('unirig', unirig)]}
 (OUT / 'manifest-v004.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
 print(OUT, flush=True)
