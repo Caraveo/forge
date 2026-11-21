@@ -6,7 +6,7 @@
 [![Latest release](https://img.shields.io/github/v/release/Caraveo/forge?label=release)](https://github.com/Caraveo/forge/releases/latest)
 [![License](https://img.shields.io/github/license/Caraveo/forge)](LICENSE)
 
-**[Read the documentation](documentation/README.md)**: getting started, using FORGE, troubleshooting and the changelog.
+**[Read the documentation](docs-site/src/content/docs/index.md)**: getting started, using FORGE, troubleshooting and the changelog. The documentation site is built with [Starlight](https://starlight.astro.build/) from `docs-site/`.
 
 **From a thought to a game ready 3D asset.** Describe it once. FORGE enhances the prompt, creates the image, shapes a textured model on your Radeon GPU, and prepares files for Unity. Watch the work move through the queue, then orbit and zoom the finished model right in the conversation.
 
