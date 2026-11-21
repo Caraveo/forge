@@ -84,7 +84,8 @@ m.add_data(db,"InstallExecuteSequence",[("CheckHardware","NOT Installed",799),
                                         ("RestoreRuntime","OLDFORGE",6650)])
 cab.commit(db);db.Commit();db.Close()
 build_info = DIST / "BuildInfo.cs"
-build_info.write_text('internal static class BuildInfo { public const string ProductCode="' + product + '"; }\n')
+build_info.write_text('internal static class BuildInfo { public const string ProductCode="' + product
+                      + '"; public const string MsiName="' + msi.name + '"; }\n')
 compile_exe(DIST/"FORGE-v0.05-Setup.exe",[SRC/"Bootstrap.cs",SRC/"Setup.cs",build_info],
             ["/r:System.Windows.Forms.dll","/resource:"+str(msi)+",FORGE.msi","/win32icon:"+str(ICON)])
 print(DIST/"FORGE-v0.05-Setup.exe")
