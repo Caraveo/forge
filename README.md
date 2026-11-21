@@ -39,7 +39,7 @@ Use **Settings > Apps > Installed apps > FORGE > Uninstall**. Windows Installer 
 
 ## Build from source
 
-On x64 Windows with Python 3.12 and .NET Framework 4.8, run **py -3.12 packaging\build.py**. The EXE and MSI appear in **dist**. Both contain the desktop UI, renderer, commands and provisioning scripts. The viewer supports the textured indexed triangle meshes produced by FORGE.
+On x64 Windows with Python 3.12 and .NET Framework 4.8, run `py -3.12 packaging\build.py`, then `.\packaging\check-package.ps1` in PowerShell. To install the local build or repair a v0.02 installation that stopped during runtime setup, open `dist\FORGE-v0.03-Setup.exe`. The EXE refreshes the installed app files and retries incomplete runtime setup. For a fresh installation, you can also open `dist\FORGE-v0.03-x64.msi` and launch FORGE from Start to finish setup.
 
 Runtime and model sources include [AMD ROCm](https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/), [FLUX.1-schnell](https://huggingface.co/black-forest-labs/FLUX.1-schnell), [trellis.cpp](https://github.com/pwilkin/trellis.cpp), [TRELLIS.2 GGUFs](https://huggingface.co/ilintar/trellis2-gguf), [Blender](https://www.blender.org/) and [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN).
 

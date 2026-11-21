@@ -84,8 +84,13 @@ try {
         & $uv venv --python $basePy $venv
         if ($LASTEXITCODE) { throw 'Private Python installation failed.' }
     }
+    # Redirected native stderr is a terminating error under Stop, even when the probe is meant to fail.
+    $pref = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     & $py -c "import torch,diffusers,transformers,accelerate; assert torch.version.hip" 2>$null
-    if ($LASTEXITCODE) {
+    $probe = $LASTEXITCODE
+    $ErrorActionPreference = $pref
+    if ($probe) {
         $house = Join-Path $runtime 'wheelhouse'
         New-Item -ItemType Directory -Force -Path $house | Out-Null
         $req = Join-Path $house 'requirements.txt'
@@ -95,8 +100,11 @@ try {
         if ($LASTEXITCODE) { throw 'Runtime packages failed to install from the FORGE project.' }
     }
     $torchLog = Join-Path $runtime 'torch-check.log'
+    $ErrorActionPreference = 'Continue'
     & $py -c "import torch; assert torch.version.hip and torch.cuda.is_available(); print(torch.cuda.get_device_name(0), torch.ones(1, device='cuda').cpu())" 2>$torchLog
-    if ($LASTEXITCODE) { throw "The AMD driver failed the ROCm tensor test. $(if (Test-Path -LiteralPath $torchLog) { Get-Content -LiteralPath $torchLog -Raw })" }
+    $torchCode = $LASTEXITCODE
+    $ErrorActionPreference = $pref
+    if ($torchCode) { throw "The AMD driver failed the ROCm tensor test. $(if (Test-Path -LiteralPath $torchLog) { Get-Content -LiteralPath $torchLog -Raw })" }
     $tools = @{}
     foreach ($tool in @($manifest.tools)) { $tools[$tool.dir] = Get-Tool $tool.dir $tool.zip $tool.binary }
 
@@ -104,12 +112,18 @@ try {
     $env:HF_HUB_DISABLE_SYMLINKS_WARNING = '1'
     $env:HF_HUB_DISABLE_TELEMETRY = '1'
     $fluxLog = Join-Path $runtime 'flux-download.log'
+    $ErrorActionPreference = 'Continue'
     $flux = & $py -c "from huggingface_hub import snapshot_download; print(snapshot_download('black-forest-labs/FLUX.1-schnell',revision='169573f54945f633efbe126a40a5676b4228363c',allow_patterns=['model_index.json','scheduler/*','tokenizer*/*','text_encoder*/*.json','text_encoder*/*.safetensors','transformer/*.json','transformer/*.safetensors','vae/*.json','vae/*.safetensors']))" 2>$fluxLog
-    if ($LASTEXITCODE) { throw "FLUX download failed. Accept the FLUX.1-schnell license on Hugging Face and sign in on this PC. $(if (Test-Path -LiteralPath $fluxLog) { Get-Content -LiteralPath $fluxLog -Raw })" }
+    $fluxCode = $LASTEXITCODE
+    $ErrorActionPreference = $pref
+    if ($fluxCode) { throw "FLUX download failed. Accept the FLUX.1-schnell license on Hugging Face and sign in on this PC. $(if (Test-Path -LiteralPath $fluxLog) { Get-Content -LiteralPath $fluxLog -Raw })" }
     $models = Join-Path $weights 'trellis'
     $trellisLog = Join-Path $runtime 'trellis-download.log'
+    $ErrorActionPreference = 'Continue'
     & $py -c "import sys; from huggingface_hub import snapshot_download; snapshot_download('ilintar/trellis2-gguf', local_dir=sys.argv[1], allow_patterns=['birefnet.gguf','dinov3.gguf','ss_flow.gguf','ss_dec.gguf','shape_flow_512.gguf','shape_flow_1024.gguf','shape_dec.gguf','tex_flow_512.gguf','tex_flow_1024.gguf','tex_dec.gguf'])" $models 2>$trellisLog
-    if ($LASTEXITCODE) { throw "TRELLIS weight download failed. $(if (Test-Path -LiteralPath $trellisLog) { Get-Content -LiteralPath $trellisLog -Raw })" }
+    $trellisCode = $LASTEXITCODE
+    $ErrorActionPreference = $pref
+    if ($trellisCode) { throw "TRELLIS weight download failed. $(if (Test-Path -LiteralPath $trellisLog) { Get-Content -LiteralPath $trellisLog -Raw })" }
     $config = @{
         python = $py
         enhancerPython = $py

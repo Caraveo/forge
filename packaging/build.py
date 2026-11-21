@@ -1,4 +1,5 @@
 """Windows x64 build host: CPython 3.12 (msilib) and inbox .NET Framework."""
+import argparse
 import os
 import shutil
 import subprocess
@@ -10,7 +11,9 @@ from msilib import schema, sequence
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "desktop"
 DIST = ROOT / "dist"
-APP = DIST / "app"
+parser = argparse.ArgumentParser()
+parser.add_argument("--app-dir", type=Path, default=DIST / "payload")
+APP = parser.parse_args().app_dir.resolve()
 APP.mkdir(parents=True, exist_ok=True)
 FRAME = Path(os.environ["WINDIR"]) / "Microsoft.NET/Framework64/v4.0.30319"
 
@@ -32,8 +35,8 @@ for command,mode in (("forge","model"),("generate","image"),("enhance","enhance"
     files.append(name)
 
 product="{CF2D1558-B4EC-4798-983C-5A519BC65805}"
-msi = DIST / "FORGE-v0.01-x64.msi"
-db=m.init_database(str(msi),schema,"FORGE",product,"0.1.0","Caraveo")
+msi = DIST / "FORGE-v0.03-x64.msi"
+db=m.init_database(str(msi),schema,"FORGE",product,"0.3.0","Caraveo")
 m.add_tables(db,sequence)
 m.add_data(db,"Property",[("MSIINSTALLPERUSER","1"),("ARPNOMODIFY","1"),("UpgradeCode","{D7543330-665D-4D0A-A028-550218D91288}")])
 cab=m.CAB("payload")
@@ -43,7 +46,7 @@ programs=m.Directory(db,cab,local,".","PrivatePrograms","Programs")
 dest=m.Directory(db,cab,programs,".","ForgeApp","FORGE")
 menu=m.Directory(db,cab,top,".","ProgramMenuFolder",".")
 feature=m.Feature(db,"Desktop","Desktop","FORGE",1)
-dest.start_component("ForgeFiles",feature,0,keyfile="FORGE.exe")
+dest.start_component("ForgeFiles",feature,0,keyfile="FORGE.exe",uuid="{3ED3BBCF-3D8D-4440-B35C-7451A8C3D790}")
 for f in files: dest.add_file(f,str(APP/f))
 m.add_data(db,"Shortcut",[("LaunchForge","ProgramMenuFolder","FORGE","ForgeFiles","[#FORGE.exe]",None,"Open FORGE",None,None,None,1,"ForgeApp")])
 # Binary table (distinct from the embedded cabinet stream).
@@ -51,6 +54,6 @@ m.add_data(db,"Binary",[("Probe",m.Binary(str(APP/"FORGE.exe")))])
 m.add_data(db,"CustomAction",[("CheckHardware",2,"Probe","--check"),("CleanRuntime",18,"FORGE.exe","--remove-runtime")])
 m.add_data(db,"InstallExecuteSequence",[("CheckHardware","NOT Installed",799),("CleanRuntime",'REMOVE~="ALL"',3499)])
 cab.commit(db);db.Commit();db.Close()
-compile_exe(DIST/"FORGE-v0.01-Setup.exe",[SRC/"Bootstrap.cs",SRC/"Setup.cs"],
+compile_exe(DIST/"FORGE-v0.03-Setup.exe",[SRC/"Bootstrap.cs",SRC/"Setup.cs"],
             ["/r:System.Windows.Forms.dll","/resource:"+str(msi)+",FORGE.msi"])
-print(DIST/"FORGE-v0.01-Setup.exe")
+print(DIST/"FORGE-v0.03-Setup.exe")

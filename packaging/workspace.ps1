@@ -2,7 +2,7 @@
 $ErrorActionPreference='Stop'
 $project=Split-Path $PSScriptRoot -Parent
 $py='C:\Projects\Hunyuan3D-2\.venv\Scripts\python.exe'
-& $py (Join-Path $PSScriptRoot 'build.py')
+& $py (Join-Path $PSScriptRoot 'build.py') --app-dir (Join-Path $project 'dist\app')
 if ($LASTEXITCODE) { throw 'Desktop build failed' }
 $config=@{
     python=$py
