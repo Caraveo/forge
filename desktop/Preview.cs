@@ -87,7 +87,7 @@ internal sealed class Preview : Grid {
     public void Zoom(double factor){zoom=Math.Max(.32,Math.Min(5,zoom*factor));Frame();}
     public void Reset(){yaw=.48;pitch=.16;zoom=1;Frame();}
     void Frame(){
-        double aspect=Math.Max(.25,ActualWidth/Height), tan=Math.Tan(Math.PI*24/180);
+        double aspect=Math.Max(.25,ActualWidth/Math.Max(1,ActualHeight)), tan=Math.Tan(Math.PI*24/180);
         var forward=new Vector3D(Math.Sin(yaw)*Math.Cos(pitch),Math.Sin(pitch),Math.Cos(yaw)*Math.Cos(pitch));
         var right=new Vector3D(Math.Cos(yaw),0,-Math.Sin(yaw));
         var up=Vector3D.CrossProduct(forward,right);

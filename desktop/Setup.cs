@@ -3,6 +3,8 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using Microsoft.Win32;
+[assembly: System.Reflection.AssemblyVersion("0.4.0.0")]
+[assembly: System.Reflection.AssemblyFileVersion("0.4.0.0")]
 
 internal static class Hardware {
     [DllImport("kernel32")] static extern bool GetPhysicallyInstalledSystemMemory(out ulong kb);
@@ -39,6 +41,27 @@ internal static class Hardware {
 }
 
 internal static class Setup {
+    static string RuntimeDir(){
+        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"FORGE-Data","runtime");
+    }
+    // During a major upgrade the previous package's uninstall runs its own
+    // --remove-runtime, which only deletes a runtime carrying .forge-owned.
+    public static void PreserveRuntime(){
+        string owned=Path.Combine(RuntimeDir(),".forge-owned"),parked=Path.Combine(RuntimeDir(),".forge-upgrade");
+        if(!File.Exists(owned))return;
+        if(File.Exists(parked))File.Delete(parked);
+        File.Move(owned,parked);
+    }
+    public static void RestoreRuntime(){
+        string owned=Path.Combine(RuntimeDir(),".forge-owned"),parked=Path.Combine(RuntimeDir(),".forge-upgrade");
+        if(!File.Exists(parked))return;
+        if(File.Exists(owned))File.Delete(parked);else File.Move(parked,owned);
+    }
+    public static bool Ready(string app){
+        RestoreRuntime();
+        string runtime=RuntimeDir();
+        return File.Exists(Path.Combine(runtime,"config.json")) && File.Exists(Path.Combine(runtime,"unirig",".complete-v004")) && File.Exists(Path.Combine(runtime,"chat",".complete-v004"));
+    }
     public static void Install(string app){
         Hardware.Check();
         using(var process=Process.Start(new ProcessStartInfo("powershell.exe","-NoProfile -ExecutionPolicy Bypass -File "+Forge.Quote(Path.Combine(app,"setup-runtime.ps1"))){UseShellExecute=true})){

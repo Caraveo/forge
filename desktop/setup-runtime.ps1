@@ -1,4 +1,7 @@
 $ErrorActionPreference = 'Stop'
+$setupMutex = New-Object System.Threading.Mutex($false, 'Local\FORGE-Runtime-Setup')
+try { $ownsSetup = $setupMutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $ownsSetup = $true }
+if (!$ownsSetup) { throw 'FORGE setup is already running. Wait for that setup window to finish.' }
 & (Join-Path $PSScriptRoot 'FORGE.exe') --check --quiet | Out-Null
 if ($LASTEXITCODE) { throw 'Requires AMD CPU and GPU, 16 GB dedicated VRAM and 32 GB system RAM.' }
 $data = Join-Path $env:LOCALAPPDATA 'FORGE-Data'
@@ -6,6 +9,8 @@ $runtime = Join-Path $data 'runtime'
 $weights = Join-Path $data 'models'
 $origin = 'https://github.com/Caraveo/forge/releases/download/runtime-v0.01'
 $owner = Join-Path $runtime '.forge-owned'
+$parked = Join-Path $runtime '.forge-upgrade'
+if ((Test-Path -LiteralPath $parked) -and !(Test-Path -LiteralPath $owner)) { Move-Item -LiteralPath $parked -Destination $owner }
 if ((Test-Path -LiteralPath $runtime) -and !(Test-Path -LiteralPath $owner)) { throw "Existing unrecognized directory: $runtime" }
 New-Item -ItemType Directory -Force -Path $runtime, $weights | Out-Null
 New-Item -ItemType File -Force -Path $owner | Out-Null
@@ -136,7 +141,9 @@ try {
     }
     $config | ConvertTo-Json | Set-Content (Join-Path $runtime 'config.json') -Encoding UTF8
     Write-Output 'Runtime setup finished.'
+    & $py (Join-Path $PSScriptRoot 'setup-extras.py') $runtime
+    if ($LASTEXITCODE) { throw 'FORGE v0.04 tools could not be installed. Open FORGE to resume.' }
 } catch {
     Write-Output ("SETUP FAILED: " + $_.Exception.Message)
     throw
-} finally { Stop-Transcript }
+} finally { Stop-Transcript; $setupMutex.ReleaseMutex(); $setupMutex.Dispose() }

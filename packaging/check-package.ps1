@@ -1,8 +1,8 @@
 param([string]$Dist=(Join-Path (Split-Path $PSScriptRoot -Parent) 'dist'),
       [string]$AppDir=(Join-Path $Dist 'payload'))
 $ErrorActionPreference='Stop'
-$msi=Join-Path $Dist 'FORGE-v0.03-x64.msi'
-$exe=Join-Path $Dist 'FORGE-v0.03-Setup.exe'
+$msi=Join-Path $Dist 'FORGE-v0.04-x64.msi'
+$exe=Join-Path $Dist 'FORGE-v0.04-Setup.exe'
 $assembly=[Reflection.Assembly]::LoadFile((Resolve-Path $exe).Path)
 $stream=$assembly.GetManifestResourceStream('FORGE.msi')
 try {
@@ -22,3 +22,9 @@ while($record=$view.Fetch()){
 }
 if($count -lt 10){throw 'Incomplete MSI payload'}
 Write-Host "Verified embedded MSI SHA256 $embedded and $count file records."
+$compiler=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+$routing=Join-Path $Dist 'check-routing.exe'
+& $compiler /nologo /target:exe "/out:$routing" (Join-Path $PSScriptRoot 'check-routing.cs') (Join-Path (Split-Path $PSScriptRoot -Parent) 'desktop\Intent.cs')
+if($LASTEXITCODE){throw 'Routing test compilation failed'}
+& $routing
+if($LASTEXITCODE){throw 'Routing tests failed'}

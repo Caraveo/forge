@@ -17,17 +17,19 @@ internal static class Forge {
             try{
                 using(var input=Assembly.GetExecutingAssembly().GetManifestResourceStream("FORGE.msi"))
                 using(var output=File.Create(path))input.CopyTo(output);
-                bool installed = MsiQueryProductState("{CF2D1558-B4EC-4798-983C-5A519BC65805}") == 5;
+                // Older builds are replaced by the MSI's major upgrade. Only this exact
+                // build being installed already (state 5) needs an explicit repair.
+                bool installed = MsiQueryProductState(BuildInfo.ProductCode) == 5;
                 string repair = installed ? " REINSTALL=ALL REINSTALLMODE=vamus" : "";
                 using(var p=Process.Start("msiexec.exe","/i "+Quote(path)+repair+" /passive /norestart")){
                     p.WaitForExit();
-                    if(p.ExitCode!=0){
+                    if(p.ExitCode!=0&&p.ExitCode!=3010){
                         MessageBox.Show("Windows Installer returned code "+p.ExitCode+".","FORGE Setup");
                         return p.ExitCode;
                     }
                 }
                 string local=Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-                if(!File.Exists(Path.Combine(local,"FORGE-Data","runtime","config.json")))Setup.Install(Path.Combine(local,"Programs","FORGE"));
+                if(!Setup.Ready(Path.Combine(local,"Programs","FORGE")))Setup.Install(Path.Combine(local,"Programs","FORGE"));
                 MessageBox.Show("FORGE is ready. Open it from Start.","FORGE Setup");return 0;
             }finally{File.Delete(path);Directory.Delete(dir);}
         }catch(Exception e){MessageBox.Show(e.Message,"FORGE Setup");return 1;}
