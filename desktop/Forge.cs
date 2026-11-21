@@ -237,7 +237,20 @@ internal sealed class Forge : Window {
             if(current!=null){current.Cancelled=true;KillTree(current.Proc);}
         };
     }
-    void AddText(string text,double size){var label=Label(text,size);label.Margin=new Thickness(4,10,4,8);cards.Children.Add(label);history.ScrollToEnd();}
+    // Messaging layout: your messages on the right in the accent colour, FORGE's on the left.
+    Border Bubble(UIElement content,bool mine){
+        return new Border{Child=content,Background=mine?accent:card,BorderBrush=mine?Brushes.Transparent:line,BorderThickness=new Thickness(mine?0:1),
+            CornerRadius=mine?new CornerRadius(18,18,6,18):new CornerRadius(18,18,18,6),Padding=new Thickness(14,9,14,10),
+            Margin=mine?new Thickness(80,8,4,4):new Thickness(4,6,80,6),HorizontalAlignment=mine?HorizontalAlignment.Right:HorizontalAlignment.Left,MaxWidth=640};
+    }
+    void AddText(string text,double size){
+        var label=Label(text,Math.Min(size,15.5));
+        cards.Children.Add(Bubble(label,false));history.ScrollToEnd();
+    }
+    void AddUser(string text){
+        var label=new TextBlock{Text=text,FontSize=15,Foreground=onAccent,TextWrapping=TextWrapping.Wrap};
+        cards.Children.Add(Bubble(label,true));history.UpdateLayout();history.ScrollToEnd();
+    }
     // forge.ico is embedded by packaging/build.py; the window falls back to the default icon without it.
     static ImageSource AppIcon(){
         try{
@@ -293,14 +306,22 @@ internal sealed class Forge : Window {
         string response=File.ReadAllText(reply);AddText(response,15);
         conversation.Add(new Dictionary<string,string>{{"role","assistant"},{"content",response}});
         if(conversation.Count>12)conversation.RemoveRange(0,conversation.Count-12);
-        var choices=new WrapPanel();
-        choices.Children.Add(Button("Generate image",()=>{composer.Text="generate "+raw;Submit();}));
-        choices.Children.Add(Button("Build 3D",()=>{composer.Text="forge "+raw;Submit();}));
+        // Offer to build only when the message describes something; "hi" gets a plain reply.
+        string subject=Intent.Subject(raw);
+        if(subject==null)return;
+        string label=subject.Length>28?subject.Substring(0,27).TrimEnd()+"\u2026":subject;
+        var choices=new WrapPanel{Margin=new Thickness(1,0,0,6)};
+        foreach(var offer in new[]{Tuple.Create("\U0001F3A8 Image of \u201C"+label+"\u201D","generate "),Tuple.Create("\U0001F9F1 3D model of \u201C"+label+"\u201D","forge ")}){
+            string command=offer.Item2+subject;
+            var b=Button(offer.Item1,()=>{composer.Text=command;Submit();},false,16);
+            b.FontSize=12.5;b.Padding=new Thickness(12,5,12,5);b.Focusable=false;choices.Children.Add(b);
+        }
         cards.Children.Add(choices);
     }
     void Submit(){string raw=composer.Text.Trim();if(raw=="")return;
         string mode=Intent.Mode(raw);
-        if(mode=="chat")lastSubject=raw;
+        // Remember only real ideas, so "make it" never builds a greeting.
+        if(mode=="chat"&&Intent.Subject(raw)!=null)lastSubject=Intent.Subject(raw);
         if(attachment==null&&lastSubject!=null&&(mode=="model"||mode=="image")&&System.Text.RegularExpressions.Regex.IsMatch(raw,@"\b(it|that|this)\s*[.!?]*$",System.Text.RegularExpressions.RegexOptions.IgnoreCase))raw=(mode=="model"?"forge ":"generate ")+lastSubject;
         if((mode=="model"||mode=="image")&&attachment==null&&System.Text.RegularExpressions.Regex.IsMatch(raw,@"^(forge|build|make|mold|generate|create|imagine|image)\s*[.!?]*$",System.Text.RegularExpressions.RegexOptions.IgnoreCase)){AddText("What would you like me to create?",15);return;}
         if((mode=="rig"||mode=="background"||mode=="upscale")&&attachment==null){AddText("Attach or select a file for this action.",15);return;}
@@ -311,7 +332,7 @@ internal sealed class Forge : Window {
         if(mode=="rig"&&!config.ContainsKey("unirig")){AddText("Rigging is still installing. Reopen FORGE to finish setup.",15);return;}
         string source=attachment;
         composer.Clear();if(mode!="chat")SetAttachment(null);
-        AddText(raw,17);
+        AddUser(raw);
         // Rigging an image builds its model first, so the preset applies there too.
         bool rigsImage=mode=="rig"&&source!=null&&new[]{".png",".jpg",".jpeg",".webp"}.Contains(Path.GetExtension(source).ToLowerInvariant());
         if(mode=="model"||mode=="image"||rigsImage){
@@ -332,7 +353,8 @@ internal sealed class Forge : Window {
         }
         Enqueue(raw,source,name);
     }
-    void AddNote(string text){cards.Children.Add(new TextBlock{Text=text,FontSize=12.5,Foreground=muted,TextWrapping=TextWrapping.Wrap,Margin=new Thickness(4,-4,4,8)});}
+    // A small caption under your own message (right side), such as the chosen quality.
+    void AddNote(string text){cards.Children.Add(new TextBlock{Text=text,FontSize=12,Foreground=muted,TextWrapping=TextWrapping.Wrap,TextAlignment=TextAlignment.Right,HorizontalAlignment=HorizontalAlignment.Right,MaxWidth=560,Margin=new Thickness(80,0,8,6)});}
     void Enqueue(string raw,string source,string name){
         string mode=Intent.Mode(raw);
         var job=new Job{Raw=raw,Source=source,Mode=mode,Name=String.IsNullOrEmpty(name)?(mode=="image"?"Image":"Model"):CleanName(name).Length>0?CleanName(name):"Project",Quality=Intent.Quality(raw)};
@@ -401,11 +423,12 @@ internal sealed class Forge : Window {
     }
     // A conversational line in the chat, tagged with the project it belongs to.
     FrameworkElement Say(Job job,string text){
-        var line=new TextBlock{FontSize=14.5,Foreground=ink,TextWrapping=TextWrapping.Wrap,Margin=new Thickness(4,8,4,4),MaxWidth=760,HorizontalAlignment=HorizontalAlignment.Left};
+        var line=new TextBlock{FontSize=14.5,Foreground=ink,TextWrapping=TextWrapping.Wrap};
         line.Inlines.Add(new System.Windows.Documents.Run(job.Name){FontWeight=FontWeights.SemiBold,Foreground=accent});
         line.Inlines.Add(new System.Windows.Documents.Run("  "+text));
-        cards.Children.Add(line);if(job.Anchor==null)job.Anchor=line;
-        history.UpdateLayout();history.ScrollToEnd();return line;
+        var bubble=Bubble(line,false);
+        cards.Children.Add(bubble);if(job.Anchor==null)job.Anchor=bubble;
+        history.UpdateLayout();history.ScrollToEnd();return bubble;
     }
     // An image inside the conversation, on a dark plate so cutouts read clearly.
     void ShowPicture(string path,bool cutout){

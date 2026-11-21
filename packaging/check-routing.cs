@@ -23,6 +23,20 @@ internal static class CheckRouting {
             string actual=Intent.Quality(quality[i,0]);
             if(actual!=quality[i,1])throw new Exception(quality[i,0]+" quality "+actual);
         }
+        // Chat messages that must not offer to build anything.
+        string[] smallTalk = {"hi", "Hi!", "hi forge", "hello there", "hey", "thanks", "thank you so much", "ok", "cool",
+            "good morning", "how do I rig a model?", "what can you do", "can you help", "lol", "bye", "hii", "yo!", "test"};
+        foreach (string text in smallTalk)
+            if (Intent.Subject(text) != null) throw new Exception("small talk treated as an idea: " + text + " -> " + Intent.Subject(text));
+        string[,] ideas = {
+            {"a cozy cabin in the woods", "a cozy cabin in the woods"}, {"dragon", "dragon"},
+            {"I am thinking about a forest house", "a forest house"}, {"maybe a rusty robot.", "a rusty robot"},
+            {"hi, a red car", "hi, a red car"}
+        };
+        for (int i=0; i<ideas.GetLength(0); i++) {
+            string actual=Intent.Subject(ideas[i,0]);
+            if(actual!=ideas[i,1])throw new Exception(ideas[i,0]+" idea -> "+(actual??"null"));
+        }
         Console.WriteLine("Command and conversation routing passed.");
         return 0;
     }

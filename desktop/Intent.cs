@@ -1,6 +1,22 @@
 using System.Text.RegularExpressions;
 
 internal static class Intent {
+    // Returns the buildable idea in a chat message, or null for small talk and questions.
+    // Chat only offers Image / 3D buttons (and "make it" only reuses a subject) when this finds one.
+    public static string Subject(string text) {
+        string s = Regex.Replace((text ?? "").Trim(), @"\s+", " ");
+        if (s.Length == 0 || s.EndsWith("?")) return null;
+        if (Regex.IsMatch(s, @"^(how|what|why|when|where|who|which|can|could|would|should|is|are|do|does|did|will|tell me|explain|help)\b", RegexOptions.IgnoreCase)) return null;
+        string small = @"^(hi|hii+|hello|hey|heya|yo|sup|hiya|howdy|greetings|thanks|thank you|thx|ty|ok|okay|k|cool|nice|great|awesome|lol|haha|bye|goodbye|good (morning|afternoon|evening|night)|gm|gn|yes|yeah|yep|no|nope|sure|please|sorry|wow|test|testing)\b";
+        if (Regex.IsMatch(s, small + @"[\s,.!:;)(-]*(there|forge|again|all|guys|buddy|friend|so much|a lot|everyone)?[\s,.!:;)(-]*$", RegexOptions.IgnoreCase)) return null;
+        s = Regex.Replace(s, @"^(i('m| am) (thinking|dreaming) (about|of)|i('d| would) like|i want|maybe|how about|what about|let's (make|do|try)|imagine)\s+", "", RegexOptions.IgnoreCase);
+        s = s.Trim(' ', '.', '!', ',');
+        // An idea needs at least one real word beyond filler.
+        var stop = new[] { "a", "an", "the", "of", "and", "with", "in", "on", "for", "to", "my", "me", "it", "this", "that", "some", "very", "really", "just" };
+        foreach (Match m in Regex.Matches(s, @"[A-Za-z]{3,}"))
+            if (System.Array.IndexOf(stop, m.Value.ToLowerInvariant()) < 0) return s.Length > 160 ? s.Substring(0, 160) : s;
+        return null;
+    }
     // Mirrors infer_quality in desktop/runner.py, which applies the preset.
     public static string Quality(string text) {
         if (Regex.IsMatch(text, @"\b(?:draft|low[- ]quality|low[- ]?res)\b", RegexOptions.IgnoreCase)) return "draft";
