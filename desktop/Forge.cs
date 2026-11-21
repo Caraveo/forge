@@ -22,7 +22,7 @@ internal sealed class Forge : Window {
     sealed class Job {
         public string Raw,Source,Name,Mode,Quality,Folder,Stage="Waiting in line";
         public Border Card;public TextBlock Pill,Detail;public ProgressBar Bar;public Button Action;
-        public FrameworkElement Anchor;public Process Proc;public DateTime Started;
+        public FrameworkElement Anchor;public Process Proc;public DateTime Started;public WrapPanel Actions;
         public bool Cancelled,Done,ModelShown;public System.Windows.Threading.DispatcherTimer Watch;
     }
     readonly Queue<Job> pending=new Queue<Job>();
@@ -258,7 +258,8 @@ internal sealed class Forge : Window {
             return stream==null?null:BitmapFrame.Create(stream,BitmapCreateOptions.None,BitmapCacheOption.OnLoad);
         }catch(Exception){return null;}
     }
-    public void AddModel(string path){
+    // Returns the model card's action row so callers can add actions (such as Open folder) to it.
+    public WrapPanel AddModel(string path){
         try {
             var view=new Preview(path);
             view.SetBinding(HeightProperty,new System.Windows.Data.Binding("ViewportHeight"){Source=history});
@@ -277,7 +278,8 @@ internal sealed class Forge : Window {
             tools.Children.Add(controls);
             panel.Children.Add(tools);cards.Children.Add(new Border{Child=panel,Background=card,Padding=new Thickness(16),CornerRadius=new CornerRadius(12),Margin=new Thickness(0,8,8,8)});
             history.UpdateLayout();history.ScrollToEnd();
-        }catch(Exception ex){AddText("Preview unavailable. "+ex.GetBaseException().Message,15);}
+            return controls;
+        }catch(Exception ex){AddText("Preview unavailable. "+ex.GetBaseException().Message,15);return null;}
     }
     void SaveAsset(string path){
         var dlg=new SaveFileDialog{FileName=Path.GetFileName(path),Filter="Asset (*"+Path.GetExtension(path)+")|*"+Path.GetExtension(path)};
@@ -285,14 +287,21 @@ internal sealed class Forge : Window {
         try{if(!String.Equals(Path.GetFullPath(path),Path.GetFullPath(dlg.FileName),StringComparison.OrdinalIgnoreCase))File.Copy(path,dlg.FileName,true);}
         catch(Exception ex){AddText("Could not save. "+ex.Message,15);}
     }
-    void AddImage(string path){
-        var panel=new StackPanel();string caption=Caption(path);
-        if(caption!="image"){var label=Label(caption,17);label.FontWeight=FontWeights.SemiBold;label.Margin=new Thickness(4,0,0,8);panel.Children.Add(label);}
-        panel.Children.Add(new Image{Source=Preview.Picture(path),Height=300,HorizontalAlignment=HorizontalAlignment.Left});
-        panel.Children.Add(Button("Save image",()=>SaveAsset(path)));
-        panel.Children.Add(Button("Select image",()=>{SetAttachment(path);composer.Focus();}));
-        cards.Children.Add(panel);
+    // Image result with its actions on one compact row; returns that row for extra actions.
+    WrapPanel AddImage(string path){
+        var panel=new StackPanel{HorizontalAlignment=HorizontalAlignment.Left,Margin=new Thickness(4,4,4,8)};string caption=Caption(path);
+        if(caption!="image"){var label=Label(caption,17);label.FontWeight=FontWeights.SemiBold;label.Margin=new Thickness(0,0,0,8);panel.Children.Add(label);}
+        var picture=new Image{Source=Preview.Picture(path),Height=300,HorizontalAlignment=HorizontalAlignment.Left,Stretch=Stretch.Uniform,Cursor=Cursors.Hand,ToolTip=path};
+        picture.MouseLeftButtonUp+=(s,e)=>{try{Process.Start(new ProcessStartInfo(path){UseShellExecute=true});}catch(Exception){}};
+        panel.Children.Add(picture);
+        var actions=ActionRow();
+        actions.Children.Add(Button("Save image",()=>SaveAsset(path)));
+        actions.Children.Add(Button("Select image",()=>{SetAttachment(path);composer.Focus();}));
+        panel.Children.Add(actions);
+        cards.Children.Add(panel);history.UpdateLayout();history.ScrollToEnd();
+        return actions;
     }
+    WrapPanel ActionRow(){return new WrapPanel{HorizontalAlignment=HorizontalAlignment.Left,Margin=new Thickness(-3,8,0,0)};}
     async Task Chat(string raw,string source,string job){
         conversation.Add(new Dictionary<string,string>{{"role","user"},{"content",raw}});
         string request=Path.Combine(job,"chat.json"),reply=Path.Combine(job,"reply.txt");
@@ -479,7 +488,7 @@ internal sealed class Forge : Window {
         }
         else if(data.StartsWith("[show] model ")){
             Say(job,"\u2728 "+Pick("The 3D model is ready, give it a spin!","Here it is in 3D, drag to spin it!","Sculpted! Drag to spin it.")+" Next up: Unity files \U0001F4E6");
-            AddModel(data.Substring(13));job.ModelShown=true;
+            job.Actions=AddModel(data.Substring(13));job.ModelShown=true;
         }
         else if(data.Contains("[flow]")){
             var step=System.Text.RegularExpressions.Regex.Match(data,@"\]\s+(\d+)/(\d+).*?~([\d.]+)s left");
@@ -628,12 +637,23 @@ internal sealed class Forge : Window {
                     if(proc.ExitCode!=0)throw new Exception("The build stopped.");
                 }
                 if(job.Watch!=null)job.Watch.Stop();
-                if(mode=="rig"){Say(job,"\U0001F389 "+Pick("It's rigged!","Bones in place, it's rigged!")+" Save the FBX and drop it into Unity.");cards.Children.Add(Button("Save rigged FBX",()=>SaveAsset(asset)));}
-                else if(image){Say(job,"\U0001F389 "+Pick("Here it is!","All done, here it is!","Ta-da!"));AddImage(asset);}
-                else{Say(job,"\U0001F389 "+Pick("All done!","Finished!","It's ready!")+" Rig it, save it, or expand it for a closer look.");if(!job.ModelShown){AddModel(asset);job.ModelShown=true;}}
+                // Every result gets one compact action row; Open folder joins it.
+                WrapPanel actions;
+                if(mode=="rig"){
+                    Say(job,"\U0001F389 "+Pick("It's rigged!","Bones in place, it's rigged!")+" Save the FBX and drop it into Unity.");
+                    actions=ActionRow();actions.Margin=new Thickness(1,0,0,8);actions.Children.Add(Button("Save rigged FBX",()=>SaveAsset(asset)));cards.Children.Add(actions);
+                }
+                else if(image){Say(job,"\U0001F389 "+Pick("Here it is!","All done, here it is!","Ta-da!"));actions=AddImage(asset);}
+                else{
+                    Say(job,"\U0001F389 "+Pick("All done!","Finished!","It's ready!")+" Rig it, save it, or expand it for a closer look.");
+                    if(!job.ModelShown){job.Actions=AddModel(asset);job.ModelShown=true;}
+                    actions=job.Actions;
+                }
                 string done_dir=job_dir;
                 var open=Button("\U0001F4C1 Open folder",()=>{try{Process.Start("explorer.exe",Quote(done_dir));}catch(Exception){}});
-                open.HorizontalAlignment=HorizontalAlignment.Left;open.Margin=new Thickness(4,0,4,8);open.ToolTip=done_dir;cards.Children.Add(open);
+                open.ToolTip=done_dir;
+                if(actions!=null)actions.Children.Add(open);
+                else{open.HorizontalAlignment=HorizontalAlignment.Left;open.Margin=new Thickness(4,0,4,8);cards.Children.Add(open);}
                 history.ScrollToEnd();SetState(job,"Done");
             }catch(OperationCanceledException){
                 if(job.Watch!=null)job.Watch.Stop();
