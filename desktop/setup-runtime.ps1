@@ -142,7 +142,7 @@ try {
     $config | ConvertTo-Json | Set-Content (Join-Path $runtime 'config.json') -Encoding UTF8
     Write-Output 'Runtime setup finished.'
     & $py (Join-Path $PSScriptRoot 'setup-extras.py') $runtime
-    if ($LASTEXITCODE) { throw 'FORGE v0.04 tools could not be installed. Open FORGE to resume.' }
+    if ($LASTEXITCODE) { throw 'FORGE chat and rigging tools could not be installed. Open FORGE to resume.' }
 } catch {
     Write-Output ("SETUP FAILED: " + $_.Exception.Message)
     throw

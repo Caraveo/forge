@@ -1,8 +1,8 @@
 param([string]$Dist=(Join-Path (Split-Path $PSScriptRoot -Parent) 'dist'),
       [string]$AppDir=(Join-Path $Dist 'payload'))
 $ErrorActionPreference='Stop'
-$msi=Join-Path $Dist 'FORGE-v0.04-x64.msi'
-$exe=Join-Path $Dist 'FORGE-v0.04-Setup.exe'
+$msi=Join-Path $Dist 'FORGE-v0.05-x64.msi'
+$exe=Join-Path $Dist 'FORGE-v0.05-Setup.exe'
 $assembly=[Reflection.Assembly]::LoadFile((Resolve-Path $exe).Path)
 $stream=$assembly.GetManifestResourceStream('FORGE.msi')
 try {

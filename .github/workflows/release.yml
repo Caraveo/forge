@@ -1,7 +1,7 @@
 name: Windows release
 on:
   push:
-    tags: ['v0.04']
+    tags: ['v0.05']
 permissions:
   contents: write
 jobs:
@@ -22,4 +22,4 @@ jobs:
         run: |
           gh release view "$env:GITHUB_REF_NAME"
           if ($LASTEXITCODE -ne 0) { gh release create "$env:GITHUB_REF_NAME" --title "FORGE $env:GITHUB_REF_NAME" --generate-notes --verify-tag }
-          gh release upload "$env:GITHUB_REF_NAME" dist/FORGE-v0.04-Setup.exe dist/FORGE-v0.04-x64.msi --clobber
+          gh release upload "$env:GITHUB_REF_NAME" dist/FORGE-v0.05-Setup.exe dist/FORGE-v0.05-x64.msi --clobber

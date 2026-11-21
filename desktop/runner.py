@@ -17,7 +17,55 @@ def run(args, **kwargs):
     subprocess.run(list(map(str, args)), check=True, **kwargs)
 
 
-def process(job, raw, mode, cfg, output=None, resolution=512, steps=None, seed=42, source=None):
+# Quality presets. Words in the prompt choose one ("forge me a super apple" -> high);
+# explicit --quality/--res/--steps always win. Keep the word lists in sync with
+# desktop/Intent.cs, which shows the chosen preset in the app.
+QUALITY = {
+    "draft":    {"res": 512,  "steps": 8,  "atlas": 1024, "tex_res": 512,  "image": 768,  "texture": 1024},
+    "standard": {"res": 512,  "steps": 12, "atlas": 1024, "tex_res": None, "image": 768,  "texture": 4096},
+    "high":     {"res": 1024, "steps": 20, "atlas": 2048, "tex_res": 1024, "image": 768,  "texture": 4096, "upscale_image": True},
+}
+DRAFT_WORDS = r"draft|low[- ]quality|low[- ]?res"
+HIGH_WORDS = (r"super|superior|supreme|high[- ]quality|quality|hq|prime|premium|ultra|best|detailed|"
+              r"hi[- ]?res|high[- ]res(?:olution)?|masterpiece")
+
+
+def infer_quality(text):
+    if re.search(r"\b(?:%s)\b" % DRAFT_WORDS, text, re.I):
+        return "draft"
+    if re.search(r"\b(?:%s)\b" % HIGH_WORDS, text, re.I):
+        return "high"
+    return "standard"
+
+
+def strip_quality(prompt):
+    """Drop quality words so they steer the build, not the subject ("super apple" -> "apple")."""
+    words = "|".join(w for w in (DRAFT_WORDS, HIGH_WORDS))
+    prompt = re.sub(r"\b(?:%s)\b" % words, " ", prompt, flags=re.I)
+    prompt = re.sub(r"^\s*(?:me|us)\s+", "", re.sub(r"\s+", " ", prompt)).strip(" ,.-")
+    return re.sub(r"\b([Aa]) (?=[AEIOUaeiou])", r"\1n ", prompt)
+
+
+def resolve_quality(raw, quality, resolution, steps, cfg):
+    """Pick the preset, apply explicit overrides, and fall back if weights are missing."""
+    name = quality if quality in QUALITY else infer_quality(raw)
+    preset = dict(QUALITY[name], name=name)
+    if resolution:
+        preset["res"] = resolution
+    if steps:
+        preset["steps"] = steps
+    if preset["res"] not in (512, 1024):
+        print("[quality] Resolution %s is not installed; using 1024." % preset["res"], flush=True)
+        preset["res"] = 1024
+    models = Path(cfg["models"])
+    needed = ["shape_flow_%d.gguf" % preset["res"], "tex_flow_%d.gguf" % preset["res"]]
+    if not all((models / f).is_file() for f in needed):
+        print("[quality] %s weights are missing; building at standard quality." % preset["res"], flush=True)
+        preset.update({k: v for k, v in QUALITY["standard"].items()}, name="standard")
+    return preset
+
+
+def process(job, raw, mode, cfg, output=None, resolution=None, steps=None, seed=42, source=None, quality="auto"):
     def stage(label):
         print("[stage] " + label, flush=True)
 
@@ -32,6 +80,8 @@ def process(job, raw, mode, cfg, output=None, resolution=512, steps=None, seed=4
 
     prompt = re.sub(r"^(?:(?:please|can you|could you|would you)\s+)+", "", raw.strip(), flags=re.I)
     prompt = re.sub(r"^(forge|build|make|mold|generate|create|imagine|image|enhance)\s+", "", prompt, flags=re.I)
+    preset = resolve_quality(raw, quality, resolution, steps, cfg)
+    prompt = strip_quality(prompt) or prompt
     image = output if output and mode == "image" else job / (job.name + ".png")
     mesh = output if output and mode == "model" else image.with_suffix(".glb")
     for path in (image, mesh):
@@ -53,7 +103,7 @@ def process(job, raw, mode, cfg, output=None, resolution=512, steps=None, seed=4
         if source is None or not source.is_file():
             raise ValueError("Select a model or image to rig.")
         if source.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
-            process(job, raw, "model", cfg, resolution=resolution, steps=steps, seed=seed, source=source)
+            process(job, raw, "model", cfg, resolution=resolution, steps=steps, seed=seed, source=source, quality=quality)
             source = job / (job.name + "-asset") / (job.name + ".fbx")
         if source.suffix.lower() == ".glb":
             prepared = job / "rig-input"
@@ -92,23 +142,65 @@ def process(job, raw, mode, cfg, output=None, resolution=512, steps=None, seed=4
         if not prompt:
             raise ValueError("The enhancer returned an empty prompt.")
         print(prompt, flush=True)
+        print("[prompt] " + " ".join(prompt.split()), flush=True)
         if mode == "enhance":
             return
+    label = {"draft": "draft", "standard": "", "high": "high quality"}[preset["name"]]
+    if label:
+        print("[quality] %s: %s geometry, %s steps, %spx atlas, %spx Unity textures" % (
+            label, preset["res"], preset["steps"], preset["atlas"], preset["texture"]), flush=True)
     if source is None:
-        stage("Generating image")
-        run([cfg["python"], APP / "flux_generate.py", "--out", image, "--seed", seed,
-             "--steps", steps if mode=="image" and steps else 4, "--", prompt], env=env)
+        stage("Generating image" + (" (%s)" % label if label else ""))
+        flux = [cfg["python"], APP / "flux_generate.py", "--out", image, "--seed", seed,
+                "--steps", steps if mode=="image" and steps else 4]
+        try:
+            run(flux + ["--width", preset["image"], "--height", preset["image"], "--", prompt], env=env)
+        except subprocess.CalledProcessError:
+            # ROCm on Windows caps single allocations near 4 GB; FLUX above 768 px exceeds it.
+            if preset["image"] <= 768:
+                raise
+            print("[quality] The image was too large for the GPU; painting it at 768 px.", flush=True)
+            run(flux + ["--width", 768, "--height", 768, "--", prompt], env=env)
     if not image.is_file():
         raise FileNotFoundError(image)
     if mode == "image":
+        if preset.get("upscale_image") and source is None:
+            # High-quality images: paint at 768 px, then upscale 4x to 3072 px.
+            stage("Upscaling image (high quality)")
+            larger = image.with_name(image.stem + "-4x.png")
+            run([cfg["upscaler"], "-i", image, "-o", larger, "-n", "realesrgan-x4plus",
+                 "-m", Path(cfg["upscaler"]).parent / "models", "-s", 4, "-f", "png"], env=env)
+            larger.replace(image)
         return
-    stage("Building textured model")
-    run([cfg["trellis"], "--models", cfg["models"], "--image", image, "--output", mesh,
-         "--backend", "Vulkan", "--gpu", cfg.get("vulkanGPU", 0), "--res", resolution,
-         "--steps", steps or 12, "--seed", seed,
-         "--dump-bg", "--webp", "off", "--verbose"], env=env)
+    # Events the app turns into conversation: [show] when a file is ready,
+    # [watch] for a file another process will write while it runs.
+    if source is None:
+        print("[show] image " + str(image), flush=True)
+    print("[watch] cutout " + str(mesh.with_name(mesh.stem + "_cutout.png")), flush=True)
+
+    def build(settings):
+        command = [cfg["trellis"], "--models", cfg["models"], "--image", image, "--output", mesh,
+                   "--backend", "Vulkan", "--gpu", cfg.get("vulkanGPU", 0), "--res", settings["res"],
+                   "--steps", settings["steps"], "--seed", seed, "--atlas", settings["atlas"],
+                   "--dump-bg", "--webp", "off", "--verbose"]
+        if settings["tex_res"]:
+            command += ["--tex-res", settings["tex_res"]]
+        run(command, env=env)
+
+    stage("Building textured model" + (" (%s)" % label if label else ""))
+    try:
+        build(preset)
+    except subprocess.CalledProcessError:
+        if preset["name"] != "high":
+            raise
+        # A high-quality build can exhaust VRAM on a 16 GB card; finish the job anyway.
+        print("[quality] The high-quality build stopped; retrying at standard quality.", flush=True)
+        preset = dict(QUALITY["standard"], name="standard")
+        stage("Building textured model (standard retry)")
+        build(preset)
     if not mesh.is_file():
         raise FileNotFoundError(mesh)
+    print("[show] model " + str(mesh), flush=True)
     stage("Preparing Unity files")
     assets = job / (job.name + "-asset")
     assets.mkdir(exist_ok=True)
@@ -116,11 +208,22 @@ def process(job, raw, mode, cfg, output=None, resolution=512, steps=None, seed=4
     export = [cfg["blender"], "-b", "--factory-startup", "--python-exit-code", "1",
               "--python", APP / "transit_blender.py", "--", mesh, fbx, assets]
     run(export, env=env)
+    from PIL import Image
     for texture in list(assets.glob("*.png")):
-        scaled = texture.with_name(texture.stem + "-4x.png")
-        run([cfg["upscaler"], "-i", texture, "-o", scaled, "-n", "realesrgan-x4plus",
-             "-m", Path(cfg["upscaler"]).parent / "models", "-s", 4, "-f", "png"], env=env)
-        scaled.replace(texture)
+        with Image.open(texture) as baked:
+            size = max(baked.size)
+        if size < preset["texture"]:
+            scaled = texture.with_name(texture.stem + "-4x.png")
+            run([cfg["upscaler"], "-i", texture, "-o", scaled, "-n", "realesrgan-x4plus",
+                 "-m", Path(cfg["upscaler"]).parent / "models", "-s", 4, "-f", "png"], env=env)
+            scaled.replace(texture)
+        # Cap Unity textures at the preset size; a 2048 atlas upscaled 4x would be 8K.
+        with Image.open(texture) as current:
+            current.load()
+            if max(current.size) > preset["texture"]:
+                ratio = preset["texture"] / max(current.size)
+                current.resize((round(current.width * ratio), round(current.height * ratio)),
+                               Image.LANCZOS).save(texture)
     run(export, env=env)
     if not fbx.is_file():
         raise FileNotFoundError(fbx)
@@ -132,7 +235,10 @@ if __name__ == "__main__":
     parser.add_argument("--job", type=Path)
     parser.add_argument("--out", type=Path)
     parser.add_argument("--name")
-    parser.add_argument("--resolution", "--res", type=int, choices=(512,1024,1536), default=512)
+    parser.add_argument("--resolution", "--res", type=int, choices=(512, 1024),
+                        help="geometry resolution; overrides the quality preset")
+    parser.add_argument("--quality", choices=["auto", "draft", "standard", "high"], default="auto",
+                        help="auto reads words such as super, premium or draft from the prompt")
     parser.add_argument("--steps", type=int)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--mode", choices=["image", "model", "enhance", "upscale", "background", "rig"], default="model")
@@ -149,4 +255,5 @@ if __name__ == "__main__":
     if not raw.strip():
         parser.error("Describe the asset to build")
     process(job, raw.strip(), args.mode, cfg, args.out.resolve() if args.out else None,
-            args.resolution, args.steps, args.seed, args.input.resolve() if args.input else None)
+            args.resolution, args.steps, args.seed, args.input.resolve() if args.input else None,
+            args.quality)

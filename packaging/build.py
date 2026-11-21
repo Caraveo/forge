@@ -29,7 +29,7 @@ compile_exe(APP / "FORGE.exe", [SRC / f for f in ("Forge.cs","Preview.cs","Setup
             ["/r:" + str(FRAME / "WPF" / f) for f in ("PresentationFramework.dll","PresentationCore.dll","WindowsBase.dll")]
             + ["/r:System.Xaml.dll","/r:System.Web.Extensions.dll","/r:Microsoft.CSharp.dll",
                "/win32icon:" + str(ICON), "/resource:" + str(ICON) + ",forge.ico"])
-files = ["FORGE.exe","runner.py","flux_generate.py","transit_blender.py","setup-runtime.ps1","cli.ps1","prompt_enhancer.py","rig.ps1","chat.py","setup-extras.py","manifest-v004.json"]
+files = ["FORGE.exe","runner.py","flux_generate.py","transit_blender.py","setup-runtime.ps1","cli.ps1","prompt_enhancer.py","rig.ps1","chat.py","names.py","setup-extras.py","manifest-v004.json"]
 for f in files[1:]:
     shutil.copy2((ROOT/"model_forge_local" if f=="prompt_enhancer.py" else SRC)/f,APP/f)
 for command,mode in (("forge","model"),("generate","image"),("enhance","enhance"),("upscale","upscale"),("background","background")):
@@ -42,10 +42,10 @@ files.append('rig.cmd')
 # Every build is a major upgrade: a fresh ProductCode under the fixed UpgradeCode.
 # Reusing one ProductCode across versions turned upgrades into repairs, which
 # Windows Installer's SecureRepair rejects (errors 1625/1603).
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 upgrade = "{D7543330-665D-4D0A-A028-550218D91288}"
 product = "{" + str(uuid.uuid4()).upper() + "}"
-msi = DIST / "FORGE-v0.04-x64.msi"
+msi = DIST / "FORGE-v0.05-x64.msi"
 db=m.init_database(str(msi),schema,"FORGE",product,VERSION,"Caraveo")
 m.add_tables(db,sequence)
 # REINSTALLMODE "a" forces every file to be copied. Without it, costing sees the
@@ -85,6 +85,6 @@ m.add_data(db,"InstallExecuteSequence",[("CheckHardware","NOT Installed",799),
 cab.commit(db);db.Commit();db.Close()
 build_info = DIST / "BuildInfo.cs"
 build_info.write_text('internal static class BuildInfo { public const string ProductCode="' + product + '"; }\n')
-compile_exe(DIST/"FORGE-v0.04-Setup.exe",[SRC/"Bootstrap.cs",SRC/"Setup.cs",build_info],
+compile_exe(DIST/"FORGE-v0.05-Setup.exe",[SRC/"Bootstrap.cs",SRC/"Setup.cs",build_info],
             ["/r:System.Windows.Forms.dll","/resource:"+str(msi)+",FORGE.msi","/win32icon:"+str(ICON)])
-print(DIST/"FORGE-v0.04-Setup.exe")
+print(DIST/"FORGE-v0.05-Setup.exe")
