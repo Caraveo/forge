@@ -48,6 +48,8 @@ internal sealed class Forge : Window {
     const string Glyphs="Segoe MDL2 Assets";
     readonly Border composerCard=new Border();
     readonly WrapPanel attachmentTray=new WrapPanel();
+    // Next-step actions for the attachment, shown between the job cards and the composer.
+    readonly WrapPanel actionBar=new WrapPanel{Margin=new Thickness(2,0,0,8),Visibility=Visibility.Collapsed};
     // Tonal (secondary) or filled (primary) button with a rounded, borderless template.
     Button Button(string text,Action action,bool primary=false,double radius=10){
         var b=new Button{Content=text,Padding=new Thickness(14,7,14,7),Margin=new Thickness(3),Cursor=Cursors.Hand,FontSize=13.5,
@@ -111,7 +113,7 @@ internal sealed class Forge : Window {
     }
     // The attachment lives inside the composer as a chip; its hover "x" is the only way to clear it.
     void SetAttachment(string path){
-        attachment=path;attachmentTray.Children.Clear();
+        attachment=path;attachmentTray.Children.Clear();actionBar.Children.Clear();actionBar.Visibility=Visibility.Collapsed;
         attachmentTray.Visibility=path==null?Visibility.Collapsed:Visibility.Visible;
         if(path==null)return;
         attachmentTray.Children.Add(AttachmentChip(path));
@@ -128,7 +130,7 @@ internal sealed class Forge : Window {
         }
         foreach(var action in actions){
             var b=Button(action.Item1,action.Item2,false,16);b.FontSize=12.5;b.Padding=new Thickness(12,5,12,5);
-            b.VerticalAlignment=VerticalAlignment.Center;b.Margin=new Thickness(0,8,6,0);attachmentTray.Children.Add(b);
+            b.Margin=new Thickness(0,0,6,0);actionBar.Children.Add(b);actionBar.Visibility=Visibility.Visible;
         }
     }
     FrameworkElement AttachmentChip(string path){
@@ -213,6 +215,7 @@ internal sealed class Forge : Window {
         jobScroller.Content=jobList;jobScroller.MaxHeight=230;jobScroller.Margin=new Thickness(0,0,0,10);
         jobScroller.VerticalScrollBarVisibility=ScrollBarVisibility.Auto;jobScroller.Visibility=Visibility.Collapsed;
         footer.Children.Insert(footer.Children.IndexOf(composerCard),jobScroller);
+        footer.Children.Insert(footer.Children.IndexOf(composerCard),actionBar);
         // The raw build log stays out of the way until Ctrl + L.
         buildLog.Header="Build log  (Ctrl + L)";buildLog.Content=details;buildLog.Foreground=muted;buildLog.Margin=new Thickness(4,10,0,0);
         buildLog.Visibility=Visibility.Collapsed;footer.Children.Add(buildLog);
