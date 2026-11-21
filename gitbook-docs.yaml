@@ -1,14 +1,17 @@
 $schema: https://api.gitbook.com/gitbook-docs.yaml
-version: 1
 site:
   title: FORGE
   structure:
-    # The project's documentation (README.md, COMMANDS.md) lives at the repository root,
-    # so the site is a single space read from there. docs/ holds only images.
     - type: space
       key: space-forge
       title: FORGE
       path: forge
       default: true
       content:
-        directory: .
+        directory: ./
+    - type: space
+      key: space-1
+      title: Documentation
+      path: documentation
+      content:
+        directory: ./documentation
