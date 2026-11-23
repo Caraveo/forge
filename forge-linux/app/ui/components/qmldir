@@ -1,0 +1,17 @@
+module components
+ActionButton.qml ActionButton
+IconButton.qml IconButton
+AttachmentChip.qml AttachmentChip
+TextBubble.qml TextBubble
+NoteLine.qml NoteLine
+ImageBubble.qml ImageBubble
+ImageResultCard.qml ImageResultCard
+ModelCard.qml ModelCard
+ModelViewer.qml ModelViewer
+ModelWindow.qml ModelWindow
+NameCard.qml NameCard
+JobCard.qml JobCard
+SetupPage.qml SetupPage
+Composer.qml Composer
+ActionsCard.qml ActionsCard
+ActionRow.qml ActionRow

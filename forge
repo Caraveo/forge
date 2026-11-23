@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -eu
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DATA="${FORGE_DATA_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/FORGE-Data}"
+if [ ! -x "$DATA/runtime/env/bin/python" ]; then
+    echo "FORGE runtime is not installed yet. Run: $HERE/install.sh" >&2
+    exit 1
+fi
+exec "$DATA/runtime/env/bin/python" "$HERE/forge-linux/app/main.py" "$@"

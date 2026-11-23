@@ -10,6 +10,14 @@
 
 **From a thought to a game ready 3D asset.** Describe it once. FORGE enhances the prompt, creates the image, shapes a textured model on your Radeon GPU, and prepares files for Unity. Watch the work move through the queue, then orbit and zoom the finished model right in the conversation.
 
+## FORGE is now on Linux
+
+Use the [Linux installation guide](README.linux.md) or download the [Linux x86-64 release](https://github.com/Caraveo/forge/releases/tag/linux-v0.05). The Linux build includes the Qt desktop app, Ubuntu dock integration, and local AMD GPU generation.
+
+![Textured banana model in FORGE's Linux 3D preview](docs/screenshots/linux-model-preview.png)
+
+## FORGE on Windows
+
 ### Dream it. Describe it. Forge it.
 
 Private, local generation built around AMD hardware and Vulkan acceleration. Type `forge a friendly golden dog named Buddy` and follow the build from first image to Unity ready model. Or type `generate a wooden toy boat` to create an image.
