@@ -13,7 +13,7 @@ import threading
 import uuid
 from pathlib import Path
 
-from PySide6.QtCore import Property, QObject, QTimer, QUrl, Signal, Slot
+from PySide6.QtCore import Property, QObject, QSettings, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QFont, QGuiApplication, QIcon
 from PySide6.QtQml import QQmlApplicationEngine, qmlRegisterModule, qmlRegisterType
 from PySide6.QtQuick import QQuickWindow
@@ -24,10 +24,13 @@ if str(APP_DIR) not in sys.path:
 
 from core import config, intent  # noqa: E402
 from core.chat_service import ChatService  # noqa: E402
+from core.dimension_bridge import DimensionBridge  # noqa: E402
 from core.jobs import JobManager  # noqa: E402
 from core.process import open_path  # noqa: E402
+from core.resources import ResourceMonitor  # noqa: E402
+from backend import creative  # noqa: E402
 
-VERSION = "0.05"
+VERSION = config.VERSION
 PICK = random.choice
 
 
@@ -84,6 +87,8 @@ class AppController(QObject):
     outputDirChanged = Signal()
     nameSuggestions = Signal(str, list)
     setComposerText = Signal(str)
+    closeReady = Signal()
+    resourcesChanged = Signal()
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
@@ -94,11 +99,20 @@ class AppController(QObject):
         self._chat: ChatService | None = None
         self._attachment: Path | None = None
         self._pending_name: dict | None = None
+        self._revision_target: Path | None = None
         self._model_keys: dict[str, str] = {}
         self._jobs: dict[str, dict] = {}
         self._build_log: list[str] = []
         self._setup_process: subprocess.Popen | None = None
         self._setup_log: list[str] = []
+        self._settings = QSettings()
+        self._dimension = DimensionBridge()
+        self._resource_monitor = ResourceMonitor()
+        self._resources = self._resource_monitor.snapshot()
+        self._resource_timer = QTimer(self)
+        self._resource_timer.setInterval(2000)
+        self._resource_timer.timeout.connect(self._update_resources)
+        self._resource_timer.start()
         self._dark = is_dark()
         self._busy = False
         self._thinking = False
@@ -133,8 +147,13 @@ class AppController(QObject):
         self._manager.buildLog.connect(self._on_build_log)
         self._manager.busyChanged.connect(self._on_busy)
         self._manager.errorMessage.connect(self._on_error)
+        self._manager.suggestionAdded.connect(self._on_suggestion)
+        self._manager.creativeRestored.connect(self._on_creative_restored)
+        self._manager.closeReady.connect(self.closeReady)
+        QTimer.singleShot(0, self._manager.recover)
         self._chat = ChatService(self._config_path, self._cfg, APP_DIR, self)
         self._chat.thinking.connect(self._on_thinking)
+        self._chat.queued.connect(self._on_chat_queued)
         self._chat.reply.connect(self._on_chat_reply)
         self._chat.namesSuggested.connect(self._on_names)
         self._chat.error.connect(self._on_chat_error)
@@ -331,14 +350,59 @@ class AppController(QObject):
     def urlFor(self, value: str) -> str:
         return QUrl.fromLocalFile(str(local_path(value))).toString()
 
+    @Slot(str, result=str)
+    def dimensionUrl(self, value: str) -> str:
+        """Return a private, local Dimension preview URL when it is installed."""
+        return self._dimension.preview_url(local_path(value))
+
+    @Property(dict, notify=resourcesChanged)
+    def resources(self) -> dict:
+        return self._resources
+
+    def _update_resources(self) -> None:
+        self._resources = self._resource_monitor.snapshot()
+        self.resourcesChanged.emit()
+
     @Slot(str)
-    def submit(self, raw: str) -> None:
+    def openDimension(self, value: str) -> None:
+        """Open the complete local Dimension studio for the selected model."""
+        if self._busy:
+            self._say("Dimension Studio will be ready after this generation finishes, so GPU model work stays exclusive.")
+            return
+        path = local_path(value)
+        if not path.is_file():
+            self._say("That model is no longer available to preview.")
+            return
+        try:
+            subprocess.Popen(["dimension", str(path)], start_new_session=True)
+        except OSError:
+            self._say("Dimension is not installed. The built-in interactive preview is still available.")
+
+    @Slot(str)
+    def submit(self, raw):
+        self._submit(raw)
+
+    def _submit(self, raw: str, automatic=False) -> None:
         raw = (raw or "").strip()
         if not raw:
             return
         if self._manager is None or self._cfg is None:
             self._say("Finish runtime setup and reopen FORGE to build.")
             return
+        if self._revision_target is not None:
+            project = self._revision_target
+            self._revision_target = None
+            try:
+                creative.add_modification(project, raw)
+            except ValueError as exc:
+                self._say(str(exc))
+                return
+            self.clearComposer.emit()
+            self.appendEntry.emit({"kind": "user", "text": raw, "key": "user:" + uuid.uuid4().hex})
+            self._say("I saved that change for the next revision.")
+            self._revision_actions(project)
+            return
+        original = raw
         mode = intent.mode(raw)
         subject = intent.subject(raw)
         if mode == "chat" and subject is not None:
@@ -397,18 +461,22 @@ class AppController(QObject):
             suffix = "Rigged" if mode == "rig" else "Upscaled" if mode == "upscale" else "Cutout"
             name = intent.caption(source) + " " + suffix
         if name is None and mode in ("model", "image"):
-            if self.askNames:
-                self._ask_name(raw, source, mode, quality)
+            if self.askNames and not automatic:
+                self._ask_name(raw, source, mode, quality, original)
                 return
             name = intent.fallback_names(raw)[0]
-        self._enqueue(raw, source, name, mode, quality)
+        self._enqueue(raw, source, name, mode, quality, original)
 
     def _enqueue(self, raw: str, source: Path | None, name: str | None,
-                 mode: str, quality: str) -> None:
+                 mode: str, quality: str, original: str) -> str | None:
         assert self._manager is not None
-        self._manager.enqueue(raw, source, name or "", mode, quality)
+        try:
+            return self._manager.enqueue(raw, source, name or "", mode, quality, original=original)
+        except (OSError, RuntimeError) as exc:
+            self._say(str(exc))
+            return None
 
-    def _ask_name(self, raw: str, source: Path | None, mode: str, quality: str) -> None:
+    def _ask_name(self, raw: str, source: Path | None, mode: str, quality: str, original: str) -> None:
         key = "name:" + uuid.uuid4().hex
         suggestions = intent.fallback_names(raw)[:3]
         if source is not None:
@@ -416,7 +484,7 @@ class AppController(QObject):
             if caption:
                 suggestions = [caption] + [n for n in suggestions if n.lower() != caption.lower()]
         self._pending_name = {"key": key, "raw": raw, "source": source,
-                              "mode": mode, "quality": quality, "suggestions": suggestions}
+                              "mode": mode, "quality": quality, "original": original, "suggestions": suggestions}
         self.appendEntry.emit({
             "kind": "name", "key": key, "title": "Name this project",
             "hint": "Pick a suggestion or type your own. Your files are saved under this name.",
@@ -436,7 +504,7 @@ class AppController(QObject):
         pending = self._pending_name
         self._pending_name = None
         self.removeEntry.emit(pending["key"])
-        self._enqueue(pending["raw"], pending["source"], cleaned, pending["mode"], pending["quality"])
+        self._enqueue(pending["raw"], pending["source"], cleaned, pending["mode"], pending["quality"], pending["original"])
         self.focusComposer.emit()
 
     @Slot(list)
@@ -461,6 +529,9 @@ class AppController(QObject):
         self._thinking = value
         self.chatThinkingChanged.emit()
 
+    def _on_chat_queued(self) -> None:
+        self._say("I’ll answer when your current creation has finished its model work.")
+
     def _on_chat_reply(self, text: str, subject: str) -> None:
         self.removeEntry.emit("thinking")
         self._thinking = False
@@ -482,12 +553,52 @@ class AppController(QObject):
         self.chatThinkingChanged.emit()
         self._say("🙁 Chat stopped: " + message)
 
+    def _on_suggestion(self, name, raw, idea_id, suggestion, folder):
+        self._idea_card(Path(folder), name, idea_id, suggestion)
+
+    def _idea_card(self, project: Path, name: str, idea_id: str, suggestion: str) -> None:
+        payload = json.dumps({"project": str(project), "idea": idea_id})
+        self.appendEntry.emit({
+            "kind": "actions", "key": "idea:" + uuid.uuid4().hex,
+            "title": f"Here’s an idea for a later version of {name}: {suggestion}",
+            "buttons": [
+                {"label": "Use this idea", "command": "creativeSelect", "arg": payload},
+                {"label": "No thanks", "command": "creativeReject", "arg": payload},
+                {"label": "More ideas", "command": "creativeMore", "arg": str(project)},
+                {"label": "Refine it myself", "command": "creativeRefine", "arg": str(project)},
+            ],
+        })
+
+    def _revision_actions(self, project: Path) -> None:
+        self.appendEntry.emit({
+            "kind": "actions", "key": "revision:" + uuid.uuid4().hex,
+            "title": "Your changes are saved. When you’re ready, I can create a revised version.",
+            "buttons": [
+                {"label": "Create revised version", "command": "creativeRevision", "arg": str(project)},
+                {"label": "Keep exploring", "command": "creativeMore", "arg": str(project)},
+            ],
+        })
+
+    def _on_creative_restored(self, folder: str, data: dict) -> None:
+        project = Path(folder)
+        name = intent.clean_name(project.name.rsplit("_", 3)[0]) or "this project"
+        self.appendEntry.emit({
+            "kind": "actions", "key": "creative-restore:" + project.name,
+            "title": f"Welcome back. {name} has saved creative ideas and revision notes.",
+            "buttons": [
+                {"label": "Review ideas", "command": "creativeReview", "arg": str(project)},
+                {"label": "Refine this design", "command": "creativeRefine", "arg": str(project)},
+                {"label": "Create revised version", "command": "creativeRevision", "arg": str(project)},
+            ],
+        })
+
     # -- jobs -----------------------------------------------------------
     def _on_job_added(self, job_id: str, name: str, kind: str, raw: str, anchor: int) -> None:
         entry = {"id": job_id, "name": name, "kind": kind, "raw": raw,
                  "state": "Queued", "detail": kind + " · waiting in line",
                  "progress": 0.0, "indeterminate": False, "done": False,
-                 "working": False, "failed": False, "cancelled": False}
+                 "working": False, "failed": False, "cancelled": False,
+                 "recoverable": self._manager.is_recoverable(job_id)}
         self._jobs[job_id] = entry
         self.appendJob.emit(entry)
 
@@ -562,9 +673,33 @@ class AppController(QObject):
     def _on_busy(self, value: bool) -> None:
         self._busy = value
         self.busyChanged.emit()
+        if self._chat is not None:
+            self._chat.set_gpu_busy(value)
 
     def _on_error(self, message: str) -> None:
         self._say("🙁 " + message)
+
+    @Slot(str)
+    def pauseJob(self, job_id):
+        if self._manager:
+            self._manager.pause(job_id)
+
+    @Slot(str)
+    def resumeJob(self, job_id):
+        if self._manager:
+            self._manager.resume(job_id)
+
+    @Slot()
+    def saveAndClose(self):
+        if self._manager:
+            self._manager.save_and_close()
+        else:
+            self.closeReady.emit()
+
+    @Slot()
+    def cancelAndClose(self):
+        if self._manager:
+            self._manager.shutdown(cancel=True)
 
     @Slot(str)
     def cancelJob(self, job_id: str) -> None:
@@ -576,10 +711,99 @@ class AppController(QObject):
         self._jobs.pop(job_id, None)
         self.removeJob.emit(job_id)
 
+    def _project_is_active(self, project: Path) -> bool:
+        job = self._jobs.get(project.name, {})
+        return job.get("state") in ("Queued", "Working", "Pausing")
+
+    @staticmethod
+    def _project_source(project: Path) -> Path | None:
+        return next((path for path in project.glob("input.*")
+                     if path.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")), None)
+
+    def _review_creative_context(self, project: Path) -> None:
+        data = creative.load(project)
+        if data is None:
+            self._say("I couldn’t find the saved ideas for that project.")
+            return
+        ideas = [idea for idea in data.get("ideas", []) if idea.get("status") in ("available", "offered")]
+        if not ideas:
+            self._say("You’ve reviewed all of the saved ideas. You can still describe your own change.")
+            self._revision_actions(project)
+            return
+        for idea in ideas:
+            self._idea_card(project, intent.clean_name(project.name.rsplit("_", 3)[0]), idea["id"], idea["text"])
+
+    def _create_revision(self, project: Path) -> None:
+        data = creative.load(project)
+        if data is None:
+            self._say("I couldn’t find the saved ideas for that project.")
+            return
+        prompt = creative.revision_prompt(data)
+        if prompt == data.get("original_prompt", ""):
+            self._say("Choose an idea or describe a change first, then I can create a revised version.")
+            return
+        title = intent.clean_name(project.name.rsplit("_", 3)[0]) or "Design"
+        number = len(data.get("revisions", [])) + 1
+        name = f"{title} revision {number}"
+        source = self._project_source(project)
+        self.appendEntry.emit({"kind": "user", "text": "Create a revised version: " + prompt,
+                               "key": "user:" + uuid.uuid4().hex})
+        job_id = self._enqueue(prompt, source, name, "model", intent.quality(prompt), prompt)
+        if job_id:
+            creative.record_revision(project, prompt, job_id)
+            self._say("Your revised version is in the queue. Your original creation stays exactly as it was.")
+
     @Slot(str, str)
     def handleAction(self, command: str, arg: str) -> None:
         if command == "submit":
             self.submit(arg)
+        elif command == "subjectDraft":
+            draft, source = json.loads(arg)
+            self.setAttachment(source)
+            self.setComposerText.emit(draft)
+            self.focusComposer.emit()
+        elif command == "creativeSelect":
+            payload = json.loads(arg)
+            project = Path(payload["project"])
+            try:
+                creative.select(project, payload["idea"])
+            except (ValueError, OSError) as exc:
+                self._say(str(exc))
+                return
+            self._create_revision(project)
+        elif command == "creativeReject":
+            payload = json.loads(arg)
+            try:
+                creative.reject(Path(payload["project"]), payload["idea"])
+            except (ValueError, OSError) as exc:
+                self._say(str(exc))
+                return
+            self._say("Got it. I’ll leave that idea out of future revisions.")
+        elif command == "creativeMore":
+            project = Path(arg)
+            try:
+                data, idea = creative.offer_next(project)
+            except (ValueError, OSError) as exc:
+                self._say(str(exc))
+                return
+            if idea is None:
+                self._say("Those are all the saved ideas for now. Tell me what you’d like to change, and I’ll save it.")
+                self._revision_actions(project)
+            else:
+                self._idea_card(project, intent.clean_name(project.name.rsplit("_", 3)[0]), idea["id"], idea["text"])
+        elif command == "creativeReview":
+            self._review_creative_context(Path(arg))
+        elif command == "creativeRefine":
+            project = Path(arg)
+            if creative.load(project) is None:
+                self._say("I couldn’t find the saved ideas for that project.")
+                return
+            self._revision_target = project
+            self.clearComposer.emit()
+            self.focusComposer.emit()
+            self._say("Tell me what you’d change. I’ll save it for the next version while your current creation keeps going.")
+        elif command == "creativeRevision":
+            self._create_revision(Path(arg))
         elif command == "open":
             self.openPath(arg)
         elif command == "select":
@@ -649,6 +873,7 @@ class AppController(QObject):
             self._manager.shutdown()
         if self._chat is not None:
             self._chat.close()
+        self._dimension.close()
         if self._setup_process is not None and self._setup_process.poll() is None:
             try:
                 os.killpg(os.getpgid(self._setup_process.pid), 15)

@@ -16,6 +16,7 @@ Item {
     width: parent ? parent.width : 0
 
     property var controls: [
+        { label: "Dimension Studio", command: "dimension" },
         { label: "🦴 Rig", command: "rig" },
         { label: "Save", command: "save" },
         { label: "Select", command: "select" },
@@ -54,11 +55,12 @@ Item {
             wrapMode: Text.NoWrap
         }
 
-        ModelViewer {
+        DimensionViewer {
             id: viewer
             width: parent.width
             height: 335
-            modelSource: root.entry ? root.entry.url : ""
+            modelPath: root.path
+            fallbackSource: root.entry ? root.entry.url : ""
         }
 
         Flow {
@@ -77,7 +79,9 @@ Item {
     }
 
     function onAction(command) {
-        if (command === "rig")
+        if (command === "dimension")
+            controller.openDimension(root.path)
+        else if (command === "rig")
             controller.handleAction("rig", root.path)
         else if (command === "save")
             root.saveRequested(root.path)
@@ -86,11 +90,15 @@ Item {
         else if (command === "expand")
             root.expandRequested(root.path, root.caption)
         else if (command === "zoomOut")
-            viewer.zoom(1.2)
+            // Dimension handles scroll zoom natively; the fallback accepts this API.
+            if (viewer.zoom)
+                viewer.zoom(1.2)
         else if (command === "zoomIn")
-            viewer.zoom(0.83)
+            if (viewer.zoom)
+                viewer.zoom(0.83)
         else if (command === "reset")
-            viewer.reset()
+            if (viewer.reset)
+                viewer.reset()
         else if (command === "open")
             controller.handleAction("open", root.folder)
     }

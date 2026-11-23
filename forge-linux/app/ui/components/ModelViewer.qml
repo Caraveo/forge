@@ -18,6 +18,10 @@ Item {
     clip: true
     onWidthChanged: Qt.callLater(root.frame)
     onHeightChanged: Qt.callLater(root.frame)
+    onModelSourceChanged: {
+        root.zoomLevel = 1.0
+        Qt.callLater(root.frame)
+    }
 
     Rectangle {
         id: background
@@ -151,7 +155,9 @@ Item {
             var dotU = vx * ux + vy * uy + vz * uz
             var dotF = vx * fx + vy * fy + vz * fz
             var extent = Math.max(Math.abs(dotR) / aspect, Math.abs(dotU))
-            distance = Math.max(distance, dotF + 1.12 * extent / tan)
+            // Leave generous breathing room around unusually wide, tall, or
+            // deeply nested imports so the complete asset is visible on load.
+            distance = Math.max(distance, dotF + 1.32 * extent / tan)
         }
         var d = distance * root.zoomLevel
         camera.position = Qt.vector3d(root.center.x + fx * d,
@@ -164,7 +170,9 @@ Item {
     }
 
     function setZoom(value) {
-        root.zoomLevel = Math.max(0.32, Math.min(5, value))
+        // Large imported scenes can require substantially more distance than
+        // generated assets; do not trap users against an arbitrary far limit.
+        root.zoomLevel = Math.max(0.18, Math.min(25, value))
         root.frame()
     }
 

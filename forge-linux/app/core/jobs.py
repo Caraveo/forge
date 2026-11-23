@@ -6,12 +6,13 @@ pipeline (FLUX, TRELLIS, Blender, UniRig) at once.
 """
 from __future__ import annotations
 
+import fcntl
+import json
 import os
 import queue
 import random
 import re
 import shutil
-import signal
 import subprocess
 import sys
 import threading
@@ -23,6 +24,8 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal
 
 from . import config, intent
+from backend.checkpoint import atomic_json
+from backend.creative import load as load_creative
 from .process import kill_tree
 
 STAGE_FLOW = re.compile(r"\]\s+(\d+)/(\d+).*?~([\d.]+)s left")
@@ -43,10 +46,26 @@ class Job:
     started: float = 0.0
     cancelled: bool = False
     done: bool = False
+    queued: bool = False
+    paused: bool = False
+    pausing: bool = False
+    resumed: bool = False
+    shown: set[str] = field(default_factory=set)
+
+    @property
+    def persistent(self):
+        return self.mode == "model" or (self.mode == "rig" and self.source is not None
+                                        and self.source.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"))
+
+    @property
+    def pause_file(self):
+        return self.folder / "generation.pause"
+
     process: subprocess.Popen | None = None
     watcher: threading.Thread | None = None
     watcher_stop: threading.Event = field(default_factory=threading.Event)
     anchor: int = 0
+    original: str = ""
 
 
 class JobManager(QObject):
@@ -60,6 +79,9 @@ class JobManager(QObject):
     jobDone = Signal(str, str, str, str)     # id, mode, asset, folder
     jobFailed = Signal(str, str)             # id, message
     jobCancelled = Signal(str)               # id
+    suggestionAdded = Signal(str, str, str, str, str)
+    creativeRestored = Signal(str, dict)
+    closeReady = Signal()
     buildLog = Signal(str)
     busyChanged = Signal(bool)
     errorMessage = Signal(str)
@@ -78,6 +100,16 @@ class JobManager(QObject):
         self._worker: threading.Thread | None = None
         self._lock = threading.Lock()
         self._busy = False
+        self._saving_close = False
+        self._lease = None
+        try:
+            self._lease = (self.output / ".forge-ui.lock").open("a+b")
+            fcntl.flock(self._lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            if self._lease is not None:
+                self._lease.close()
+            self._lease = None
+
 
     # -- public API -----------------------------------------------------
     @property
@@ -85,7 +117,9 @@ class JobManager(QObject):
         return self._busy
 
     def enqueue(self, raw: str, source: Path | None, name: str, mode: str, quality: str,
-                anchor: int = 0) -> str:
+                anchor: int = 0, original: str | None = None) -> str:
+        if self._saving_close or self._lease is None:
+            raise RuntimeError("Use the FORGE window that owns this project queue.")
         now = datetime.now()
         stem = intent.clean_name(name).replace(" ", "_")
         if not stem:
@@ -93,6 +127,8 @@ class JobManager(QObject):
         job_id = f"{stem}_{now:%Y%m%d_%H%M%S_%f}"
         folder = self.output / job_id
         folder.mkdir(parents=True, exist_ok=True)
+        if original and original != raw:
+            atomic_json(folder / "prompt-metadata.json", {"original": original})
         (folder / "prompt.txt").write_text(raw, encoding="utf-8")
         source_copy = None
         if source is not None:
@@ -104,24 +140,138 @@ class JobManager(QObject):
             id=job_id, name=intent.clean_name(name) or ("Image" if mode == "image" else "Model"),
             raw=raw, source=source_copy, mode=mode, quality=quality,
             kind=intent.kind_label(mode, quality), folder=folder,
-            asset=folder / (job_id + extension), anchor=anchor,
+            asset=folder / (job_id + extension), anchor=anchor, original=original or raw,
         )
+        if job.persistent:
+            self._write_request(job, "queued")
+        self._register(job)
+        self._schedule(job)
+        return job.id
+
+    def _write_request(self, job, state):
+        atomic_json(job.folder / "generation-request.json", {
+            "name": job.name, "mode": job.mode, "quality": job.quality, "state": state,
+            "original": job.original,
+            "source": job.source.name if job.source else None,
+        })
+
+    def recover(self):
+        if self._lease is None:
+            return
+        for request in sorted(self.output.glob("*/generation-request.json"),
+                              key=lambda p: p.parent.name.rsplit("_", 3)[-3:]):
+            try:
+                record = json.loads(request.read_text(encoding="utf-8"))
+                if record["state"] in ("done", "cancelled"):
+                    continue
+                folder = request.parent
+                if folder.name in self._jobs:
+                    continue
+                checkpoint = folder / "generation.json"
+                state = json.loads(checkpoint.read_text(encoding="utf-8"))["state"] if checkpoint.exists() else None
+                if state == "done":
+                    continue
+                (folder / "generation.close").unlink(missing_ok=True)
+                source = record["source"]
+                if source and Path(source).name != source:
+                    raise ValueError("Invalid project reference")
+                job = Job(folder.name, record["name"], (folder / "prompt.txt").read_text(encoding="utf-8"),
+                          folder / source if source else None, record["mode"], record["quality"],
+                          intent.kind_label(record["mode"], record["quality"]), folder,
+                          folder / (folder.name + (".fbx" if record["mode"] == "rig" else ".glb")))
+                if not job.persistent:
+                    continue
+                job.original = record.get("original") or job.raw
+                job.resumed = state is not None
+                self._register(job)
+                if job.pause_file.exists() or state in ("paused", "failed") or record["state"] == "failed":
+                    self._mark_paused(job)
+                else:
+                    self._schedule(job)
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                self.errorMessage.emit(f"Could not restore {request.parent.name}: {exc}")
+        self.restore_creative_context()
+
+    def restore_creative_context(self):
+        """Surface saved assistant context without starting Qwen or a generation job."""
+        for path in sorted(self.output.glob("*/creative.json")):
+            data = load_creative(path.parent)
+            if data is not None:
+                self.creativeRestored.emit(str(path.parent), data)
+
+    def is_recoverable(self, job_id):
+        return self._jobs[job_id].persistent
+
+    def _register(self, job):
         with self._lock:
             self._jobs[job.id] = job
-        self.jobAdded.emit(job.id, job.name, job.kind, job.raw, anchor)
+        self.jobAdded.emit(job.id, job.name, job.kind, job.raw, job.anchor)
         self.jobState.emit(job.id, "Queued", job.kind + " · waiting in line")
-        self._queue.put(job)
+
+    def _schedule(self, job):
+        if not job.queued:
+            job.queued = True
+            self._queue.put(job)
         self._set_busy(True)
         if self._worker is None or not self._worker.is_alive():
             self._worker = threading.Thread(target=self._drain, name="forge-jobs", daemon=True)
             self._worker.start()
-        return job.id
+
+    def _mark_paused(self, job):
+        job.paused = True
+        job.pausing = False
+        self.jobState.emit(job.id, "Paused", job.kind + " · progress saved")
+
+    def pause(self, job_id):
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if not job or not job.persistent or job.done or job.cancelled or job.paused or job.pausing:
+                return
+            job.pause_file.touch()
+            if job is self._current:
+                job.pausing = True
+                self.jobState.emit(job.id, "Pausing", "Finishing the current stage…")
+                self.messageAdded.emit(job.name, "Saving your progress after this stage…")
+            else:
+                self._mark_paused(job)
+                self.messageAdded.emit(job.name, "Your creation is safely paused.")
+
+    def resume(self, job_id):
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if not job or not job.paused or job.cancelled or self._saving_close:
+                return
+            job.pause_file.unlink(missing_ok=True)
+            job.paused = False
+            job.resumed = True
+            self._write_request(job, "queued")
+            self.jobState.emit(job.id, "Queued", job.kind + " · waiting in line")
+            self._schedule(job)
+
+    def save_and_close(self):
+        self._saving_close = True
+        self._stop.set()
+        with self._lock:
+            job = self._current
+        if job and job.persistent:
+            self.messageAdded.emit(job.name, "Finishing this stage before closing. Your project will resume when you reopen FORGE.")
+            # On reopen, the runner starts from its last saved boundary.
+            with self._lock:
+                if self._current is job and not job.pause_file.exists():
+                    job.pausing = True
+                    (job.folder / "generation.close").touch()
+        elif job:
+            self.messageAdded.emit(job.name, "Finishing the current job before closing.")
+        if not self._worker or not self._worker.is_alive():
+            self.closeReady.emit()
 
     def cancel(self, job_id: str) -> None:
         with self._lock:
             job = self._jobs.get(job_id)
         if job is None or job.done or job.cancelled:
             return
+        if job.persistent:
+            self._write_request(job, "cancelled")
         job.cancelled = True
         if job is self._current and job.process is not None:
             job.stage = "Cancelling"
@@ -132,18 +282,21 @@ class JobManager(QObject):
         job.done = True
         self.jobState.emit(job.id, "Cancelled", job.kind + " · cancelled")
         self.jobCancelled.emit(job.id)
-        self.messageAdded.emit(job.name, "🛑 Cancelled before it started.")
+        self.messageAdded.emit(job.name, "Cancelled." if job.paused else "🛑 Cancelled before it started.")
 
-    def shutdown(self) -> None:
+    def shutdown(self, cancel: bool = False) -> None:
         self._stop.set()
         with self._lock:
             jobs = list(self._jobs.values())
         for job in jobs:
-            if not job.done:
-                job.cancelled = True
+            if not job.done and not job.cancelled:
+                if cancel and not job.paused:
+                    self.cancel(job.id)
                 job.watcher_stop.set()
                 if job is self._current:
                     kill_tree(job.process)
+        if self._worker and self._worker.is_alive():
+            self._worker.join(timeout=2)
 
     # -- worker ---------------------------------------------------------
     def _set_busy(self, value: bool) -> None:
@@ -159,15 +312,22 @@ class JobManager(QObject):
                 if self._current is None and self._queue.empty():
                     self._set_busy(False)
                 continue
-            if job.cancelled:
-                continue
-            self._current = job
+            with self._lock:
+                if self._stop.is_set():
+                    break
+                job.queued = False
+                if job.cancelled or job.paused or job is self._current or job.done:
+                    continue
+                self._current = job
             job.started = time.monotonic()
             job.stage = "Starting"
             self.jobStage.emit(job.id, job.stage)
-            self.jobState.emit(job.id, "Working", job.kind + " · " + job.stage)
+            if not job.pausing:
+                self.jobState.emit(job.id, "Working", job.kind + " · " + job.stage)
             mode, source = job.mode, job.source
-            if mode == "model" and source is None:
+            if job.resumed:
+                self.messageAdded.emit(job.name, "Picking up where you left off…")
+            elif mode == "model" and source is None:
                 self.messageAdded.emit(job.name, "🚀 Let's make it! First I'll polish your prompt, then paint a reference image.")
             elif mode == "model":
                 self.messageAdded.emit(job.name, "🚀 Building a 3D model from your image. First I'll cut out the background.")
@@ -185,25 +345,43 @@ class JobManager(QObject):
                     self.messageAdded.emit(job.name, "🦴 Let's give it a skeleton!")
             try:
                 self._run(job)
+            except _Paused:
+                job.watcher_stop.set()
+                with self._lock:
+                    if not (job.folder / "generation.close").exists():
+                        self._mark_paused(job)
+                        self.messageAdded.emit(job.name, "Your creation is safely paused.")
             except _Cancelled:
                 job.done = True
                 job.watcher_stop.set()
                 self.jobState.emit(job.id, "Cancelled", job.kind + " · cancelled")
                 self.jobCancelled.emit(job.id)
-                self.messageAdded.emit(job.name, "🛑 Cancelled. I cleaned up its unfinished files.")
-                self._delete_later(job.folder)
+                if job.persistent:
+                    self.messageAdded.emit(job.name, "Cancelled. Your saved progress is still in the project folder.")
+                else:
+                    self.messageAdded.emit(job.name, "🛑 Cancelled. I cleaned up its unfinished files.")
+                    self._delete_later(job.folder)
             except Exception as exc:  # noqa: BLE001 - surface the pipeline error in the UI
-                job.done = True
+                if self._stop.is_set() and not self._saving_close and not job.cancelled:
+                    job.watcher_stop.set()
+                    continue
+                if job.persistent:
+                    self._write_request(job, "failed")
+                    self._mark_paused(job)
+                else:
+                    job.done = True
                 job.watcher_stop.set()
                 elapsed = time.monotonic() - job.started
                 self.jobState.emit(
-                    job.id, "Failed",
+                    job.id, "Paused" if job.persistent else "Failed",
                     job.kind + " · stopped" + (" after " + intent.elapsed(elapsed) if elapsed else ""),
                 )
                 message = str(exc) or "The build stopped."
                 self.jobFailed.emit(job.id, message)
                 self.messageAdded.emit(job.name, "🙁 " + message + " Press Ctrl + L to see the build log.")
             else:
+                if job.persistent:
+                    self._write_request(job, "done")
                 job.done = True
                 job.watcher_stop.set()
                 elapsed = time.monotonic() - job.started
@@ -214,9 +392,12 @@ class JobManager(QObject):
                 assert job.asset is not None
                 self.jobDone.emit(job.id, job.mode, str(job.asset), str(job.folder))
             finally:
-                self._current = None
-                job.process = None
+                with self._lock:
+                    self._current = None
+                    job.process = None
         self._set_busy(False)
+        if self._saving_close:
+            self.closeReady.emit()
 
     def _run(self, job: Job) -> None:
         env = dict(os.environ)
@@ -232,17 +413,19 @@ class JobManager(QObject):
         command = [
             python, "-u", str(self.app_dir / "backend" / "runner.py"),
             "--config", str(self.config_path), "--job", str(job.folder), "--mode", job.mode,
+            "--gui-parent", str(os.getpid()),
         ]
         if job.source is not None:
             command += ["--input", str(job.source)]
         log_path = job.folder / "pipeline.log"
-        with log_path.open("w", encoding="utf-8") as log:
+        memory_error = None
+        with log_path.open("a", encoding="utf-8") as log:
             process = subprocess.Popen(
                 command, cwd=str(job.folder), env=env, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, text=True, bufsize=1, start_new_session=True,
             )
             job.process = process
-            if job.cancelled:
+            if job.cancelled or (self._stop.is_set() and not self._saving_close):
                 kill_tree(process)
             assert process.stdout is not None
             for raw_line in process.stdout:
@@ -250,12 +433,17 @@ class JobManager(QObject):
                 log.write(line + "\n")
                 log.flush()
                 self.buildLog.emit(line)
-                self._narrate(job, line)
+                if line.startswith("[memory-blocked] "):
+                    memory_error = line[17:]
+                if not job.cancelled:
+                    self._narrate(job, line)
             code = process.wait()
         if job.cancelled:
             raise _Cancelled()
+        if code == 75:
+            raise _Paused()
         if code != 0:
-            raise RuntimeError("The build stopped.")
+            raise RuntimeError(memory_error or "The build stopped.")
         if job.asset is None or not job.asset.is_file():
             raise FileNotFoundError("The build produced no " + (job.asset.suffix.lstrip(".") if job.asset else "output") + " file.")
         if job.mode == "model" or job.mode == "rig":
@@ -263,14 +451,40 @@ class JobManager(QObject):
                 raise FileNotFoundError(job.asset)
 
     def _narrate(self, job: Job, data: str) -> None:
-        if data.startswith("[stage] "):
+        if data.startswith(("[prompt] ", "[suggestion] ", "[show] ")):
+            if data in job.shown:
+                return
+            job.shown.add(data)
+        if data.startswith("[memory-blocked] "):
+            message = data[17:]
+            job.stage = "Waiting for available memory"
+            self.jobStage.emit(job.id, job.stage)
+            self.jobState.emit(job.id, "Paused", job.kind + " · waiting for available memory")
+            self.messageAdded.emit(job.name, "Memory is in use by other applications. " + message)
+        elif data.startswith("[memory] "):
+            pass
+        elif data == "[subject-fallback]":
+            self.messageAdded.emit(job.name, "The subject assistant is unavailable. I’ll keep going with your request.")
+        elif data.startswith("[suggestion] "):
+            try:
+                idea = json.loads(data[13:])
+                idea_id, text = idea["id"], idea["text"]
+            except (ValueError, KeyError, TypeError):
+                return
+            self.suggestionAdded.emit(job.name, job.raw, idea_id, text, str(job.folder))
+        elif data.startswith("[creative-question] "):
+            self.messageAdded.emit(job.name, "For a later version, consider this: " + data[20:])
+        elif data.startswith("[stage] "):
             stage = data[8:]
             job.stage = stage.replace(" (high quality)", "").replace(" (draft)", "")
             self.jobStage.emit(job.id, job.stage)
-            self.jobState.emit(job.id, "Working", job.kind + " · " + job.stage)
+            if not job.pausing:
+                self.jobState.emit(job.id, "Working", job.kind + " · " + job.stage)
             self.jobProgress.emit(job.id, 0.0, True)
             high = "high quality" in stage
-            if stage.startswith("Generating image") and job.mode != "image":
+            if stage == "Preparing your subject":
+                self.messageAdded.emit(job.name, "Taking a closer look at your subject…")
+            elif stage.startswith("Generating image") and job.mode != "image":
                 self.messageAdded.emit(job.name, "🎨 " + random.choice([
                     "Painting the reference image", "Sketching the reference image",
                     "Painting a reference for the sculpt",
@@ -283,8 +497,10 @@ class JobManager(QObject):
                 ]) + (" at high quality (1024 geometry, 2K textures)" if high else "") + ". This is the longest step, so hang tight!")
             elif stage.startswith("Upscaling image (high quality)"):
                 self.messageAdded.emit(job.name, "🔍 Painted! Now upscaling it 4× for extra detail…")
+            elif stage == "Preparing materials and textures":
+                self.messageAdded.emit(job.name, "Preparing the materials and textures…")
             elif stage == "Preparing Unity files":
-                self.messageAdded.emit(job.name, "📦 Packing the Unity files and sharpening the textures. Almost there!")
+                self.messageAdded.emit(job.name, "📦 Packing the Unity files. Almost there!")
             elif stage == "Preparing model for rigging":
                 self.messageAdded.emit(job.name, "🦴 Getting the model ready for rigging…")
             elif stage == "Rigging with UniRig":
@@ -295,7 +511,7 @@ class JobManager(QObject):
                 prompt = prompt[:257] + "…"
             self.messageAdded.emit(job.name, "📝 " + random.choice([
                 "Here's the prompt I'll use:", "I polished your idea into:", "Here's how I'll describe it:",
-            ]) + " “" + prompt + "”  Next up: the reference image 🎨")
+            ]) + " “" + prompt + "”")
         elif data.startswith("[show] image "):
             self.messageAdded.emit(job.name, "👀 " + random.choice([
                 "Hey, look, here's the reference image!", "Here's the reference image!",
@@ -321,7 +537,8 @@ class JobManager(QObject):
                 done, count = int(match.group(1)), int(match.group(2))
                 job.stage = f"Sculpting · step {done} of {count}"
                 self.jobStage.emit(job.id, job.stage)
-                self.jobState.emit(job.id, "Working", job.kind + " · " + job.stage)
+                if not job.pausing:
+                    self.jobState.emit(job.id, "Working", job.kind + " · " + job.stage)
                 self.jobProgress.emit(job.id, 100.0 * done / max(1, count), False)
 
     def _watch_cutout(self, job: Job, path: str) -> None:
@@ -353,4 +570,8 @@ class JobManager(QObject):
 
 
 class _Cancelled(Exception):
+    pass
+
+
+class _Paused(Exception):
     pass

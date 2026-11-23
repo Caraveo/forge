@@ -13,6 +13,8 @@ Item {
     property string text: input.text
 
     signal submit(string text)
+    signal draftEdited(string text)
+    signal draftActivity()
     signal attachRequested()
     signal clearAttachmentRequested()
 
@@ -92,8 +94,10 @@ Item {
                 padding: 8
                 clip: true
                 onTextChanged: root.text = input.text
+                onTextEdited: root.draftEdited(input.text)
                 onAccepted: root.submit(input.text)
                 Keys.onPressed: function(event) {
+                    root.draftActivity()
                     if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
                             && (event.modifiers & Qt.ShiftModifier)) {
                         input.insert(input.cursorPosition, "\\n")

@@ -28,13 +28,17 @@ import zipfile
 from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[2]
-VERSION = "0.05-linux"
+VERSION = "0.15.0"
 UV_VERSION = "0.13.9"
 UV_URL = f"https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/uv-x86_64-unknown-linux-gnu.tar.gz"
+UV_SHA256 = "a7fbaff2b9a271d85c1bdb540941090fd1ce011797b4abeb48e4dcd39c2471d5"
 TRELLIS_URL = "https://github.com/pwilkin/trellis.cpp/releases/download/v0.8.1/trellis-vulkan-linux-x64.tar.gz"
+TRELLIS_SHA256 = "8c2ed7f76ab9f09d3e24dae82b1a52a75d308e853bdfd289e26d57b1f422f33b"
 UPSCALE_URL = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-ubuntu.zip"
+UPSCALE_SHA256 = "e5aa6eb131234b87c0c51f82b89390f5e3e642b7b70f2b9bbe95b6a285a40c96"
 BLENDER_VERSION = "4.2.15"
 BLENDER_URL = f"https://download.blender.org/release/Blender4.2/blender-{BLENDER_VERSION}-linux-x64.tar.xz"
+BLENDER_SHA256 = "b9dcc1d06861529779e7faf8d82c9dd3563443dfb1eb14212424c8c40b77074e"
 
 FLUX_REPO = "black-forest-labs/FLUX.1-schnell"
 FLUX_REVISION = "169573f54945f633efbe126a40a5676b4228363c"
@@ -45,6 +49,7 @@ FLUX_FILES = [
     "vae/*.json", "vae/*.safetensors",
 ]
 TRELLIS_REPO = "ilintar/trellis2-gguf"
+TRELLIS_REVISION = "a57397bd3d351599d9729fc144b3f87c3f87d65b"
 TRELLIS_FILES = [
     "birefnet.gguf", "dinov3.gguf", "ss_flow.gguf", "ss_dec.gguf",
     "shape_flow_512.gguf", "shape_flow_1024.gguf", "shape_dec.gguf",
@@ -132,10 +137,18 @@ def human(size: float) -> str:
     return f"{size:.1f} GB"
 
 
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def download(url: str, destination: Path, sha256: str | None = None) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.is_file() and destination.stat().st_size > 0:
-        if not sha256 or hashlib.sha256(destination.read_bytes()).hexdigest() == sha256:
+        if not sha256 or file_sha256(destination) == sha256:
             return
     partial = destination.with_suffix(destination.suffix + ".partial")
     for attempt in range(1, 4):
@@ -156,7 +169,7 @@ def download(url: str, destination: Path, sha256: str | None = None) -> None:
                             speed = done / max(0.1, time.monotonic() - started)
                             log(f"  {destination.name}: {100 * done / total:5.1f}%  "
                                 f"{human(done)} / {human(total)}  ({human(speed)}/s)")
-            if sha256 and hashlib.sha256(partial.read_bytes()).hexdigest() != sha256:
+            if sha256 and file_sha256(partial) != sha256:
                 partial.unlink(missing_ok=True)
                 raise SetupError(f"Checksum failed for {destination.name}")
             partial.replace(destination)
@@ -213,7 +226,7 @@ def ensure_uv(runtime: Path) -> Path:
         return target
     log("Installing uv (private Python manager)...")
     archive = runtime / "uv.tar.gz"
-    download(UV_URL, archive)
+    download(UV_URL, archive, sha256=UV_SHA256)
     staging = runtime / "uv-installing"
     shutil.rmtree(staging, ignore_errors=True)
     extract_tar(archive, staging)
@@ -261,6 +274,20 @@ def ensure_env(runtime: Path, uv: Path, with_flux: bool) -> Path:
     return python
 
 
+def ensure_subject_runtime(runtime: Path, uv: Path, python: Path) -> None:
+    """Keep Qwen3-VL's newer Transformers stack isolated from FLUX and chat."""
+    target = runtime / "subject-deps"
+    marker = target / ".qwen3-vl-4.57.6"
+    if marker.is_file():
+        return
+    result = run([uv, "pip", "install", "--python", python, "--target", target,
+                  "--upgrade", "--no-deps", "transformers==4.57.6", "tokenizers==0.22.1"])
+    if result.returncode:
+        log("The subject assistant could not be installed. Existing generation remains available.")
+        return
+    marker.touch()
+
+
 def ensure_unirig_cpu(runtime: Path, uv: Path) -> Path:
     env = runtime / "unirig" / "python311"
     python = env / "bin" / "python"
@@ -297,7 +324,7 @@ def ensure_trellis(runtime: Path) -> Path:
         return binary
     log("Installing TRELLIS.cpp (Vulkan)...")
     archive = runtime / "trellis.tar.gz"
-    download(TRELLIS_URL, archive)
+    download(TRELLIS_URL, archive, sha256=TRELLIS_SHA256)
     extract_tar(archive, root)
     archive.unlink(missing_ok=True)
     binary = find_binary(root, "trellis-cli")
@@ -314,7 +341,7 @@ def ensure_upscaler(runtime: Path) -> Path:
         return binary
     log("Installing Real-ESRGAN (Vulkan)...")
     archive = runtime / "upscale.zip"
-    download(UPSCALE_URL, archive)
+    download(UPSCALE_URL, archive, sha256=UPSCALE_SHA256)
     extract_zip(archive, root)
     archive.unlink(missing_ok=True)
     binary = find_binary(root, "realesrgan-ncnn-vulkan")
@@ -331,7 +358,7 @@ def ensure_blender(runtime: Path) -> Path:
         return binary
     log(f"Installing Blender {BLENDER_VERSION} LTS...")
     archive = runtime / "blender.tar.xz"
-    download(BLENDER_URL, archive)
+    download(BLENDER_URL, archive, sha256=BLENDER_SHA256)
     extract_tar(archive, root)
     archive.unlink(missing_ok=True)
     binary = find_binary(root, "blender")
@@ -375,7 +402,7 @@ def ensure_models(runtime: Path, python: Path, with_flux: bool, skip_models: boo
         log("Skipping model weights (--skip-models).")
         return paths
 
-    snapshot(python, TRELLIS_REPO, "main", TRELLIS_FILES, paths["models"], env)
+    snapshot(python, TRELLIS_REPO, TRELLIS_REVISION, TRELLIS_FILES, paths["models"], env)
 
     chat_marker = paths["chat"] / ".complete-linux"
     if not chat_marker.is_file():
@@ -451,6 +478,13 @@ def copy_unirig_source(runtime: Path) -> None:
 def write_config(runtime: Path, python: Path, tools: dict, models: dict) -> Path:
     output = documents() / "FORGE"
     output.mkdir(parents=True, exist_ok=True)
+    path = runtime / "config.json"
+    try:
+        previous = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        previous = {}
+    if not isinstance(previous, dict):
+        previous = {}
     config = {
         "python": str(python),
         "enhancerPython": str(python),
@@ -464,8 +498,10 @@ def write_config(runtime: Path, python: Path, tools: dict, models: dict) -> Path
         "unirig": str(models["unirig"]),
         "vulkanGPU": 0,
         "version": VERSION,
+        "modelRevisions": {"flux": FLUX_REVISION, "trellis": TRELLIS_REVISION, "unirig": UNIRIG_REVISION},
+        **{key: previous[key] for key in ("subjectRevision", "subjectDownload")
+           if key in previous},
     }
-    path = runtime / "config.json"
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
     temporary.replace(path)
@@ -480,6 +516,8 @@ def main() -> int:
                         help="download the gated FLUX.1-schnell weights")
     parser.add_argument("--skip-models", action="store_true",
                         help="install code and tools only, without model weights")
+    parser.add_argument("--subject-only", action="store_true",
+                        help="add the Qwen3-VL dependencies to an existing installation")
     parser.add_argument("--check", action="store_true", help="print hardware information and exit")
     args = parser.parse_args()
 
@@ -510,6 +548,12 @@ def main() -> int:
             raise SetupError("FORGE Linux requires a 64-bit x86 Linux system.")
         if not Path("/dev/kfd").exists():
             log("Warning: /dev/kfd is missing. ROCm inference will not work until the amdgpu kernel driver is available.")
+        if args.subject_only:
+            python = runtime / "env" / "bin" / "python"
+            if not python.is_file():
+                raise SetupError("Install the FORGE runtime first.")
+            ensure_subject_runtime(runtime, ensure_uv(runtime), python)
+            return 0 if (runtime / "subject-deps" / ".qwen3-vl-4.57.6").is_file() else 1
         log("Preparing directories...")
         for folder in ("tools", "models", "tmp", "chat", "unirig"):
             (runtime / folder).mkdir(parents=True, exist_ok=True)
@@ -517,6 +561,7 @@ def main() -> int:
 
         uv = ensure_uv(runtime)
         python = ensure_env(runtime, uv, args.with_flux)
+        ensure_subject_runtime(runtime, uv, python)
         cpu_python = ensure_unirig_cpu(runtime, uv)
         log("Blender Python: " + str(cpu_python))
 

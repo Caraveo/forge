@@ -7,7 +7,7 @@ from pathlib import Path
 
 APP_DIR = Path(__file__).resolve().parents[2]
 APP_NAME = "FORGE"
-VERSION = "0.05-linux"
+VERSION = "0.15.0"
 
 
 def data_home() -> Path:

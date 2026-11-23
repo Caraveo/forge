@@ -16,6 +16,8 @@ Window {
     readonly property int contentPadding: 24
     property bool buildLogExpanded: false
     property bool forceClose: false
+    property bool savingClose: false
+
     property var messageEntries: ({})
     property var messageItems: ({})
     property var jobItems: ({})
@@ -144,7 +146,8 @@ Window {
             Item {
                 id: header
                 Layout.fillWidth: true
-                Layout.preferredHeight: 44
+                Layout.preferredHeight: root.buildLogExpanded ? 44 : 0
+                visible: root.buildLogExpanded
 
                 Text {
                     anchors.left: parent.left
@@ -153,6 +156,15 @@ Window {
                     font.pixelSize: 24
                     font.weight: Font.DemiBold
                     color: theme.ink
+                }
+
+                ResourceGlyphs {
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    metrics: controller.resources
+                    accent: theme.accent
+                    secondary: theme.dark ? "#B7A1FF" : "#7257AA"
+                    muted: theme.dark ? "#4A5864" : "#C5CFD7"
                 }
             }
 
@@ -236,7 +248,8 @@ Window {
                                             done: model.done,
                                             working: model.working,
                                             failed: model.failed,
-                                            cancelled: model.cancelled
+                                            cancelled: model.cancelled,
+                                            recoverable: model.recoverable
                                         })
                                         item.forgeTheme = theme
                                         root.jobItems[model.id] = item
@@ -283,7 +296,8 @@ Window {
                 Item {
                     id: buildLogWrap
                     width: parent.width
-                    height: logToggle.height + buildLogArea.height
+                    height: root.buildLogExpanded ? logToggle.height + buildLogArea.height : 0
+                    visible: root.buildLogExpanded
 
                     Item {
                         id: logToggle
@@ -389,6 +403,11 @@ Window {
                 }
             }
         }
+        function onCloseReady() {
+            root.forceClose = true
+            root.close()
+        }
+        function onAttachmentChanged() {}
         function onClearComposer() {
             composer.clear()
         }
@@ -444,7 +463,7 @@ Window {
             y: 20
 
             Text {
-                text: "A build is still running. Cancel it and close FORGE?"
+                text: "A build is still running. Save your progress and close FORGE?"
                 font.pixelSize: 14
                 color: theme.ink
                 wrapMode: Text.Wrap
@@ -462,11 +481,20 @@ Window {
                 }
                 ActionButton {
                     forgeTheme: theme
-                    text: "Cancel it and close"
+                    text: "Save & Close"
+                    onClicked: {
+                        root.savingClose = true
+                        closeDialog.close()
+                        controller.saveAndClose()
+                    }
+                }
+                ActionButton {
+                    forgeTheme: theme
+                    text: "Cancel & Close"
                     danger: true
                     onClicked: {
                         root.forceClose = true
-                        controller.shutdown()
+                        controller.cancelAndClose()
                         root.close()
                     }
                 }
@@ -519,7 +547,10 @@ Window {
         composer.focusInput()
     }
 
-    onActiveChanged: if (active) composer.focusInput()
+    onActiveChanged: {
+        if (active)
+            composer.focusInput()
+    }
 
     onClosing: function(close) {
         if (!controller.busy || root.forceClose) {
@@ -527,6 +558,7 @@ Window {
             return
         }
         close.accepted = false
-        closeDialog.open()
+        if (!root.savingClose)
+            closeDialog.open()
     }
 }

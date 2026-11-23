@@ -7,6 +7,7 @@ Usage:
   forge-cli background image.png [--out path]
   forge-cli upscale image.png [--out path]
   forge-cli rig model.glb [--out path]
+  forge-cli resume project_directory
 """
 from __future__ import annotations
 
@@ -26,7 +27,7 @@ from app.core import config
 
 def main() -> int:
     parser = argparse.ArgumentParser(prog="forge-cli")
-    parser.add_argument("mode", choices=["generate", "enhance", "background", "upscale", "rig"])
+    parser.add_argument("mode", choices=["generate", "enhance", "background", "upscale", "rig", "resume"])
     parser.add_argument("files", nargs="*")
     parser.add_argument("--config", type=Path)
     parser.add_argument("--out", type=Path)
@@ -41,6 +42,25 @@ def main() -> int:
         print("FORGE runtime is not installed. Run:", APP.parent / "install.sh", file=sys.stderr)
         return 2
     cfg = json.loads(cfg_path.read_text(encoding="utf-8-sig"))
+    if args.mode == "resume":
+        if len(args.files) != 1:
+            parser.error("Choose one project folder to resume.")
+        project = Path(args.files[0]).expanduser().resolve()
+        if (project / "generation-request.json").is_file():
+            parser.error("Reopen the FORGE window to resume this desktop project.")
+        try:
+            saved = json.loads((project / "generation.json").read_text(encoding="utf-8"))["inputs"]
+        except (OSError, ValueError, KeyError) as exc:
+            parser.error(f"Could not read the project's checkpoint: {exc}")
+        command = [str(cfg["python"]), str(APP / "backend" / "runner.py"),
+                   "--config", str(cfg_path), "--job", str(project), "--mode", saved["mode"],
+                   "--quality", saved["quality"], "--seed", str(saved["seed"])]
+        for key, option in (("source", "--input"), ("output", "--out"),
+                            ("resolution", "--res"), ("steps", "--steps")):
+            if saved.get(key) is not None:
+                command.extend((option, str(saved[key])))
+        return subprocess.run(command).returncode
+
     runner_mode = {"generate": "image"}.get(args.mode, args.mode)
     command = [str(cfg["python"]), str(APP / "backend" / "runner.py"),
                "--config", str(cfg_path), "--mode", runner_mode]

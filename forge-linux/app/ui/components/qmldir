@@ -8,6 +8,8 @@ ImageBubble.qml ImageBubble
 ImageResultCard.qml ImageResultCard
 ModelCard.qml ModelCard
 ModelViewer.qml ModelViewer
+DimensionViewer.qml DimensionViewer
+ResourceGlyphs.qml ResourceGlyphs
 ModelWindow.qml ModelWindow
 NameCard.qml NameCard
 JobCard.qml JobCard

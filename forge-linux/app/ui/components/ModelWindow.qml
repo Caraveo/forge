@@ -12,8 +12,9 @@ Window {
 
     color: "#161B20"
 
-    ModelViewer {
+    DimensionViewer {
         anchors.fill: parent
-        modelSource: controller.urlFor(root.path)
+        modelPath: root.path
+        fallbackSource: controller.urlFor(root.path)
     }
 }

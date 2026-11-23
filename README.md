@@ -1,72 +1,125 @@
-# FORGE ANYTHING ON AMD/AMD
+# FORGE is now on Linux
 
-![FORGE Anything on AMD/AMD](docs/banner.png)
+FORGE is a native Linux desktop app for making game assets. Generate reference art with FLUX.1-schnell, turn images into textured 3D models with TRELLIS, preview GLB files, rig meshes with UniRig, and package assets for Unity.
 
-[![Windows release](https://github.com/Caraveo/forge/actions/workflows/release.yml/badge.svg)](https://github.com/Caraveo/forge/actions/workflows/release.yml)
-[![Latest release](https://img.shields.io/github/v/release/Caraveo/forge?label=release)](https://github.com/Caraveo/forge/releases/latest)
-[![License](https://img.shields.io/github/license/Caraveo/forge)](LICENSE)
+## Linux screenshots
 
-**[Read the documentation](https://forge-docs.caraveo.workers.dev)**: getting started, using FORGE, troubleshooting and the changelog. The site is built with [Starlight](https://starlight.astro.build/). Its source is [Caraveo/forge-docs](https://github.com/Caraveo/forge-docs).
+**Image generation**
+![FORGE on Linux in dark mode, showing a generated low-poly apple and its image actions](docs/screenshots/linux-image-generation.png)
 
-**From a thought to a game ready 3D asset.** Describe it once. FORGE enhances the prompt, creates the image, shapes a textured model on your Radeon GPU, and prepares files for Unity. Watch the work move through the queue, then orbit and zoom the finished model right in the conversation.
+**Interactive 3D preview**
+![FORGE on Linux in light mode, showing a textured banana model under studio lighting with zoom and export controls](docs/screenshots/linux-model-preview.png)
 
-## FORGE is now on Linux
+## Install on Linux
 
-Use the [Linux installation guide](README.linux.md) or download the [Linux x86-64 release](https://github.com/Caraveo/forge/releases/tag/linux-v0.05). The Linux build includes the Qt desktop app, Ubuntu dock integration, and local AMD GPU generation.
+You’ll need 64-bit x86 Linux, Python 3, an AMD GPU with a working ROCm and Vulkan setup, an internet connection for the first install, and disk space for the runtime and model weights. The screenshots above were captured on Ubuntu.
 
-![Textured banana model in FORGE's Linux 3D preview](docs/screenshots/linux-model-preview.png)
+From the folder containing this README, run:
 
-## FORGE on Windows
+```bash
+./install.sh --check
+./install.sh
+./forge
+```
 
-### Dream it. Describe it. Forge it.
+The installer creates a private Python and ROCm runtime and downloads TRELLIS, Blender, Real-ESRGAN, UniRig, and their supported model weights. The default runtime and setup log live in `~/.local/share/FORGE-Data/`. Generated assets go to `~/Documents/FORGE/` by default.
 
-Private, local generation built around AMD hardware and Vulkan acceleration. Type `forge a friendly golden dog named Buddy` and follow the build from first image to Unity ready model. Or type `generate a wooden toy boat` to create an image.
+### Download integrity
 
-> **WARNING: DO NOT INSTALL ON YOUR MAIN COMPUTER UNLESS YOU KNOW WHAT YOU ARE DOING.** FORGE installs a private Python/ROCm runtime, downloads large AI models, and uses substantial GPU memory, system memory, and disk space. Review the requirements and installation behavior below before proceeding.
+When the Linux installer needs one of these archives, it computes the file’s SHA-256 fingerprint and compares it with the expected value stored in [setup_runtime.py](forge-linux/app/backend/setup_runtime.py). Changing even one byte changes the fingerprint in practice, so a corrupt, incomplete, or replaced archive fails the check.
 
-FORGE turns a description into a textured 3D game asset on your Windows PC. Use forge, build, make, or mold followed by a model description and press Enter. Drag the finished model to orbit, zoom with Ctrl + wheel, or reset the camera. Scroll through the conversation to revisit earlier results.
+| Download | Where the expected SHA-256 comes from | Passes when | Fails when |
+| --- | --- | --- | --- |
+| uv | GitHub release asset metadata | The archive matches the digest recorded for the Linux x86-64 build. | The file’s digest differs, for example if the archive was corrupted. |
+| trellis.cpp | GitHub release asset metadata | The archive matches the digest recorded for the Linux Vulkan build. | The file’s digest differs, for example if the release asset was replaced with different bytes. |
+| Real-ESRGAN | Computed from the official Ubuntu release archive | The archive matches the exact bytes FORGE used to establish the checksum. | The file’s digest differs, for example if it contains a different build. |
+| Blender | Blender’s published release checksum | The archive matches the digest published for the Linux x64 build. | The file’s digest differs, for example if the archive is incomplete. |
 
-![FORGE with a textured character model and an attached reference image](docs/screenshot.png)
+The installer reuses a cached archive if its checksum matches. If the cached checksum differs, the installer downloads a fresh copy. If the fresh copy fails the check, the installer deletes the partial file and reports `Checksum failed`.
 
-## Install v0.05
+### Enable text-to-image and text-to-3D
 
-Download **[FORGE-v0.05-Setup.exe](https://github.com/Caraveo/forge/releases/download/v0.05/FORGE-v0.05-Setup.exe)** from the [v0.05 release](https://github.com/Caraveo/forge/releases/tag/v0.05). Setup checks your hardware, installs or repairs the app, and provisions its private runtime. You can also download and install the [MSI](https://github.com/Caraveo/forge/releases/download/v0.05/FORGE-v0.05-x64.msi) directly, then launch **FORGE** from Start to provision the runtime.
+The standard install supports workflows that start with an existing image. To generate the reference image from a text prompt, accept the [FLUX.1-schnell license on Hugging Face](https://huggingface.co/black-forest-labs/FLUX.1-schnell), then sign in and fetch the weights:
 
-Requires Windows x64, an AMD CPU, a ROCm-compatible Radeon GPU with **16 GB dedicated VRAM**, **32 GB system RAM**, an AMD driver with Vulkan support, and at least **100 GB free storage** for the private runtime, downloaded models, caches, and temporary generation files. The check allows 256 MiB of driver-reserved VRAM on a nominal 16 GB board.
+```bash
+"${FORGE_DATA_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/FORGE-Data}/runtime/env/bin/hf" auth login
+./install.sh --with-flux
+```
 
-The EXE provisions private Python 3.12 and AMD ROCm PyTorch 7.2.1 under **%LOCALAPPDATA%\FORGE-Data\runtime**. With direct MSI installation, provisioning starts on first launch. Runtime code is downloaded from the [FORGE runtime release](https://github.com/Caraveo/forge/releases/tag/runtime-v0.01): CPython, uv, the ROCm and PyTorch wheels, trellis.cpp, Blender, and Real-ESRGAN. That release is the copy FORGE installs, so setup still works if the original project sites are offline. Model weights are the exception: FLUX.1-schnell, the TRELLIS.2 GGUFs, the UniRig checkpoints and Qwen3-0.6B come from Hugging Face at pinned revisions. FLUX.1-schnell is gated: accept its license and sign in on this PC before the first launch. Allow several dozen GB for downloads and caches. Setup also installs the portable UniRig runtimes from the [FORGE runtime-v0.04 release](https://github.com/Caraveo/forge/releases/tag/runtime-v0.04) (about 5 GB), then downloads the UniRig checkpoints and Qwen3-0.6B chat model (about 7 GB). Installing over an earlier FORGE version keeps the runtime that is already there. Chat runs on the CPU. Generation and rigging use local weights. If setup fails, open FORGE again to retry. See **%LOCALAPPDATA%\FORGE-Data\setup.log** for diagnostics.
+If `HF_TOKEN` is already set in your shell, you can run the installer directly. FLUX uses SSD offload during image generation, so allow extra free space for temporary model weights.
 
-## Use FORGE
+## Launch from Ubuntu’s dock
 
-- **forge**, **build**, **make**, or **mold** followed by a description creates a 3D model.
-- **generate**, **create**, or **imagine** followed by a description creates an image.
-- Before a build starts, FORGE asks you to **name the project**. Click one of the suggested names (from your prompt, then from the local Qwen model) or type your own. The name labels the result and its folder in Documents\FORGE. Say `named Buddy` in the prompt to skip the question.
-- **Quality** comes from your wording. **super**, **superior**, **premium**, **prime**, **high quality**, **HQ**, **ultra**, **best**, **detailed** or **masterpiece** builds at high quality: 1024 geometry, 20 sampler steps, a 2048 px texture atlas and 4K Unity textures; a high-quality image is upscaled 4× to 3072 px. **draft** or **low quality** builds faster. `forge me a super apple` builds a high-quality apple. If the 1024 weights are missing or the GPU runs short of memory, FORGE finishes the build at standard quality.
-- Use **+**, or drag a file onto the window, to attach a PNG, JPEG, WebP, GLB, or FBX. It appears as a chip in the message field with suggested next steps: **Preview** or **Rig** for a model, **Build 3D**, **Remove background** or **Upscale** for an image. Hover the chip and click the red **×** to clear it. A **.txt** file is read into the message field as your prompt, ready to review and send. Other file types are refused. Select an existing result to use it in another action.
-- **remove background** creates a transparent PNG. **upscale** enlarges an image or texture 4x.
-- **rig** runs UniRig on the selected model. With an image, FORGE builds the model first. Rigged models export as FBX.
-- Ordinary messages go to the local Qwen chat model, which answers even while a build is running. Explicit tool commands start jobs. Chat offers image and 3D buttons when you want to act on an idea.
-- **Save** exports an image or model to a location you choose. **Expand** opens a model preview that fills its resizable window.
-- Each project gets a **card just above the message field** showing its state (Queued, Working, Done, Failed or Cancelled), the current stage and elapsed time. Jobs run one at a time, oldest first. **Cancel** drops a queued job or stops a running one along with everything it launched, then deletes its unfinished files. Click a card to jump to that project in the conversation.
-- While a project builds, FORGE talks you through it in the conversation: the polished prompt, the reference image, the background-removed cutout, the 3D model as soon as it exists, and what comes next.
-- Press **Ctrl + L** to show or hide the raw build log.
+The installer registers **FORGE** in the application menu. Search for **FORGE** in Activities and open it. To keep it in the dock, right-click its icon and select **Add to Favorites**.
 
-Each installed-app job saves its prompt, log and artifacts under **Documents\FORGE**. A model build includes a source image, textured GLB and Unity asset folder containing the FBX and textures. From the app directory, use **forge.cmd**, **generate.cmd**, **enhance.cmd**, **background.cmd**, **upscale.cmd**, or **rig.cmd**. For example, run `rig.cmd model.glb model-rigged.fbx` or `upscale.cmd image.png --out larger.png`. Set quality explicitly with `forge.cmd a crate --quality high`, or fine-tune with `--res 512|1024` and `--steps`.
+If you installed FORGE before the desktop launcher was added, or moved the project folder, refresh the launcher and reopen FORGE:
 
-![Generated asset in the desktop viewer](docs/model.png)
+```bash
+./install-desktop.sh
+```
 
-## Uninstall
+That command uses the existing runtime and registers the included FORGE logo for both dock and application-menu launches.
 
-Use **Settings > Apps > Installed apps > FORGE > Uninstall**. Windows Installer removes the app, Start menu shortcut and private runtime. Generated models and downloaded weights are retained. FORGE launches on demand.
+## Command-line examples
 
-## Build from source
+```bash
+./generate "a low-poly red apple"
+./enhance "a low-poly red apple"
+./background input.png --out cutout.png
+./upscale input.png --out upscaled.png
+./rig model.glb --out model-rigged.fbx
+./forge --preview model.glb
+./forge --build "a low-poly red apple"
+```
 
-On x64 Windows with Python 3.12 (3.13 removed `msilib`) and .NET Framework 4.8, run `py -3.12 packaging\build.py`, then `.\packaging\check-package.ps1` in PowerShell. Each build is a Windows Installer major upgrade: it replaces any earlier FORGE version in place and keeps the private runtime. To install the local build or repair an installation that stopped during runtime setup, open `dist\FORGE-v0.05-Setup.exe`. The EXE refreshes the installed app files and retries incomplete runtime setup. For a fresh installation, you can also open `dist\FORGE-v0.05-x64.msi` and launch FORGE from Start to finish setup.
+Use `./forge --check` after installation to verify that the launcher can see the AMD GPU and ROCm device. Open **Build log** with **Ctrl+L** in the app for pipeline output.
 
-UniRig source and the AMD compatibility changes are included under `runtime/unirig`. The release installer uses the checksum-pinned `desktop/manifest-v004.json` to install its portable runtimes. Maintainers can rebuild those archives with `packaging/bundle-runtime.py` from the verified local UniRig runtimes. The archives hold code and Python runtimes only; `desktop/setup-extras.py` downloads the model weights from Hugging Face.
+## Project layout
 
-Runtime and model sources include [AMD ROCm](https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/), [FLUX.1-schnell](https://huggingface.co/black-forest-labs/FLUX.1-schnell), [trellis.cpp](https://github.com/pwilkin/trellis.cpp), [TRELLIS.2 GGUFs](https://huggingface.co/ilintar/trellis2-gguf), [Blender](https://www.blender.org/) and [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN).
+- `forge` and `forge-cli` launch the desktop app and command-line tools.
+- `install.sh` sets up the Linux runtime. `install-desktop.sh` refreshes the application-menu launcher.
+- `forge-linux/app/` contains the Qt/QML interface and Linux generation pipeline.
+- Existing Windows launchers and source remain alongside the Ubuntu build.
 
-## Thanks
+## Ubuntu v0.15.0
 
-FORGE is built on open-source tools and models. See [THANKS.md](THANKS.md) for the full list with their licenses, and read each license before using anything made with FORGE commercially.
+For an existing runtime, run `./install.sh --subject-only` to add the subject
+assistant's dependencies without updating the packages used by FLUX and chat.
+New installs add these dependencies during setup. Qwen3-VL-8B-Instruct runs
+locally and caches its weights on first use. It receives the subject and any
+reference image. Its description goes through FORGE's original prompt compiler
+and FLUX template for text-to-3D. With an attachment, TRELLIS still reconstructs
+from the attached image. Creative suggestions can fill a new draft without
+changing the active job. If Qwen is unavailable, FORGE reports that in chat
+and uses the existing generation path.
+
+On ROCm, the Qwen worker uses BF16 with Accelerate placement across GPU memory,
+RAM, and disk. It exits before FLUX or TRELLIS starts. FORGE serializes heavy
+work across its local runners. Qwen can use CPU BF16 where supported. Allow
+roughly 17 GB for the weights and additional space for offload, and expect CPU
+inference to be slower. 16 GB ROCm performance depends on the driver and
+available memory. CUDA-specific quantizers are unnecessary for this setup.
+Advanced runtime settings in `runtime/config.json` include `subjectRevision`
+to select a Qwen repository revision and `subjectDownload: false` to use only
+cached weights.
+
+Before Qwen, FLUX, TRELLIS, Real-ESRGAN, or UniRig loads on the GPU, FORGE reads
+the available AMD VRAM and Linux system memory. A stage starts only when both
+meet its budget. If memory is busy, the project pauses before loading the stage
+and the chat asks you to close other applications and resume. FORGE does not
+close applications, terminate unrelated processes, or clear another
+application's memory. Advanced installations can set a `memoryBudgetsGiB`
+object in `runtime/config.json` with `vram` and `ram` values for `subject`,
+`flux`, `trellis-standard`, `trellis-high`, `upscale`, or `unirig`.
+
+3D projects save the original prompt, subject description, reference, textured
+GLB, prepared materials, and Unity export under the existing project folder.
+**Pause** finishes the current stage and holds the job until **Resume**.
+**Save & Close** finishes the current stage and resumes the job on the next
+launch. After an unexpected exit, FORGE validates the completed artifacts and
+repeats the interrupted stage. A manually paused job stays paused across
+restarts. Failed jobs can be retried with **Resume**. Cancelling a 3D job removes
+it from the queue and keeps its project files. Checkpoints resume at stage
+boundaries. Sampling within FLUX or TRELLIS starts over when its stage was
+interrupted. For an interrupted CLI 3D job, use
+`./forge-cli resume /path/to/project`.

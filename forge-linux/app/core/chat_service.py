@@ -21,6 +21,7 @@ class ChatService(QObject):
     reply = Signal(str, str)          # text, subject (may be empty)
     namesSuggested = Signal(list)
     error = Signal(str)
+    queued = Signal()
 
     def __init__(self, config_path: Path, cfg: dict, app_dir: Path, parent: QObject | None = None):
         super().__init__(parent)
@@ -32,13 +33,28 @@ class ChatService(QObject):
         self._lock = threading.Lock()
         self._process: subprocess.Popen | None = None
         self._conversation: list[dict[str, str]] = []
+        self._pending: list[tuple[str, Path | None]] = []
+        self._gpu_busy = False
         self._closed = False
 
     def ask(self, raw: str, source: Path | None) -> None:
         if self._closed:
             return
+        with self._lock:
+            if self._gpu_busy:
+                self._pending.append((raw, source))
+                self.queued.emit()
+                return
         thread = threading.Thread(target=self._ask_worker, args=(raw, source), daemon=True)
         thread.start()
+
+    def set_gpu_busy(self, value: bool) -> None:
+        """Defer chat-model loading until the GPU generation queue is idle."""
+        with self._lock:
+            self._gpu_busy = value
+            pending = None if value or not self._pending else self._pending.pop(0)
+        if pending is not None:
+            threading.Thread(target=self._ask_worker, args=pending, daemon=True).start()
 
     def suggest(self, raw: str) -> None:
         if self._closed or not self.cfg.get("chat"):
@@ -99,6 +115,10 @@ class ChatService(QObject):
             finally:
                 shutil.rmtree(scratch, ignore_errors=True)
                 self.thinking.emit(False)
+                with self._lock:
+                    pending = None if self._closed or self._gpu_busy or not self._pending else self._pending.pop(0)
+                if pending is not None:
+                    threading.Thread(target=self._ask_worker, args=pending, daemon=True).start()
 
     def _suggest_worker(self, raw: str) -> None:
         scratch = Path(tempfile.mkdtemp(prefix="FORGE-names-"))

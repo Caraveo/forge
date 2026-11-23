@@ -154,3 +154,20 @@ def elapsed(seconds: float) -> str:
     if hours:
         return f"{hours}:{minutes:02d}:{secs:02d}"
     return f"{minutes}:{secs:02d}"
+
+
+def generation_subject(raw):
+    return re.sub(r"^\s*(?:(?:please|can you|could you|would you)\s+)*(?:forge|build|make|mold)\b",
+                  "", raw, count=1, flags=re.I).strip()
+
+
+def idle_model_draft(raw):
+    if mode(raw) != "model":
+        return False
+    description = generation_subject(raw)
+    if not description or description.endswith(("?", ",", ":", "…", "...")):
+        return False
+    words = re.findall(r"[^\W\d_]+", description.lower())
+    if not words or words[-1] in STOP_WORDS | {"named", "called", "without", "or", "but"}:
+        return False
+    return any(word not in NAME_STOP_WORDS and len(word) >= 2 for word in words)

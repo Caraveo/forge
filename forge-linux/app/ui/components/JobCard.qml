@@ -10,6 +10,7 @@ Item {
     property string kind
     property string detail
     property string state
+    property bool recoverable
     property bool done
     property bool working
     property bool failed
@@ -59,7 +60,8 @@ Item {
                 height: 44
 
                 Item {
-                    width: root.name.length > 18 ? 220 : 300
+                    Layout.preferredWidth: 200
+                    Layout.minimumWidth: 110
                     height: 44
 
                     Text {
@@ -75,7 +77,7 @@ Item {
                         id: pill
                         x: 0
                         y: 16
-                        width: root.done ? 80 : 90
+                        width: 90
                         height: 20
                         radius: 8
                         color: root.working ? root.forgeTheme.accentSoft
@@ -103,6 +105,20 @@ Item {
                     color: root.forgeTheme.muted
                     elide: Text.ElideRight
                     verticalAlignment: Text.AlignVCenter
+                }
+
+                ActionButton {
+                    forgeTheme: root.forgeTheme
+                    visible: root.recoverable && !root.done
+                    enabled: root.state !== "Pausing"
+                    text: root.state === "Paused" ? "Resume" : root.state === "Pausing" ? "Pausing…" : "Pause"
+                    compact: true
+                    onClicked: {
+                        if (root.state === "Paused")
+                            controller.resumeJob(root.jobId)
+                        else
+                            controller.pauseJob(root.jobId)
+                    }
                 }
 
                 ActionButton {

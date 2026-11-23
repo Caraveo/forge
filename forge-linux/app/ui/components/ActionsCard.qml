@@ -7,36 +7,47 @@ Item {
     property var entry
     property string entryKey: entry && entry.key ? entry.key : ""
 
-    implicitHeight: column.height + 12
+    implicitHeight: surface.height + 8
     width: parent ? parent.width : 0
 
-    Column {
-        id: column
-        anchors.left: parent.left
-        anchors.leftMargin: 4
-        anchors.top: parent.top
-        anchors.topMargin: 4
-        spacing: 6
+    Rectangle {
+        id: surface
+        width: Math.min(parent.width - 8, 620)
+        height: column.height + 26
+        radius: 14
+        color: root.forgeTheme.card
+        border.color: root.forgeTheme.line
+        border.width: 1
 
-        Text {
-            text: root.entry ? root.entry.title : ""
-            color: root.forgeTheme.ink
-            font.pixelSize: 13
-            wrapMode: Text.Wrap
-            width: parent.width - 8
-        }
-
-        Flow {
-            width: parent.width
+        Column {
+            id: column
+            x: 14
+            y: 13
+            width: parent.width - 28
             spacing: 6
 
-            Repeater {
-                model: root.entry && root.entry.buttons ? root.entry.buttons : []
+            Text {
+                text: root.entry ? root.entry.title : ""
+                color: root.forgeTheme.ink
+                font.pixelSize: 14
+                wrapMode: Text.Wrap
+                width: parent.width
+            }
 
-                ActionButton {
-                    forgeTheme: root.forgeTheme
-                    text: modelData.label
-                    onClicked: controller.handleAction(modelData.command, modelData.arg)
+            Flow {
+                width: parent.width
+                spacing: 6
+
+                Repeater {
+                    model: root.entry && root.entry.buttons ? root.entry.buttons : []
+
+                    ActionButton {
+                        forgeTheme: root.forgeTheme
+                        text: modelData.label
+                        primary: index === 0
+                        compact: true
+                        onClicked: controller.handleAction(modelData.command, modelData.arg)
+                    }
                 }
             }
         }
